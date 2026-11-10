@@ -1,0 +1,65 @@
+{
+  "expo": {
+    "name": "Kuzen TV",
+    "slug": "kuzen-tv",
+    "version": "1.0.0",
+    "orientation": "landscape",
+    "icon": "./assets/images/icon.png",
+    "userInterfaceStyle": "dark",
+    "android": {
+      "package": "com.hafiz16.kuzen_tv",
+      "versionCode": 1,
+      "minSdkVersion": 24,
+      "adaptiveIcon": {
+        "backgroundColor": "#0a0a0a",
+        "foregroundImage": "./assets/images/android-icon-foreground.png"
+      },
+      "intentFilters": [
+        {
+          "action": "MAIN",
+          "category": [
+            "LEANBACK_LAUNCHER",
+            "DEFAULT"
+          ]
+        }
+      ]
+    },
+    "plugins": [
+      [
+        "@react-native-tvos/config-tv",
+        {
+          "isTV": true,
+          "android": {
+            "banner": "./assets/banner.png",
+            "software.leanback": {
+              "required": false
+            },
+            "hardware.touchscreen": {
+              "required": false
+            }
+          }
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 24,
+            "enableProguardInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true
+          }
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0a0a0a",
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 160
+        }
+      ],
+      "expo-video"
+    ]
+  }
+}
+
