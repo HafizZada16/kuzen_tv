@@ -3,7 +3,7 @@ import {
   StyleSheet,
   Text,
   View,
-  TouchableOpacity,
+  Pressable,
   Animated,
 } from 'react-native';
 import { Colors } from '../constants/Colors';
@@ -13,7 +13,6 @@ import {
   Tv,
   History as HistoryIcon,
   Settings,
-  Search,
 } from 'lucide-react-native';
 
 export type NavTabId = 'home' | 'anime' | 'donghua' | 'history' | 'settings';
@@ -40,8 +39,8 @@ const NAV_ITEMS: NavItemDef[] = [
   { id: 'settings', label: 'Pengaturan', icon: Settings },
 ];
 
-const COLLAPSED_WIDTH = 72;
-const EXPANDED_WIDTH = 224;
+export const COLLAPSED_WIDTH = 72;
+export const EXPANDED_WIDTH = 224;
 
 export const TVSidebar: React.FC<TVSidebarProps> = ({
   activeTab,
@@ -51,13 +50,12 @@ export const TVSidebar: React.FC<TVSidebarProps> = ({
   onExpandedChange,
 }) => {
   const [focusedTab, setFocusedTab] = useState<NavTabId | null>(null);
-  const [isExpanded, setIsExpanded] = useState(false);
 
   const widthAnim = useRef(new Animated.Value(COLLAPSED_WIDTH)).current;
   const labelOpacity = useRef(new Animated.Value(0)).current;
+  const blurTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const expandSidebar = () => {
-    setIsExpanded(true);
     onExpandedChange?.(true);
     Animated.parallel([
       Animated.timing(widthAnim, {
@@ -68,14 +66,12 @@ export const TVSidebar: React.FC<TVSidebarProps> = ({
       Animated.timing(labelOpacity, {
         toValue: 1,
         duration: 180,
-        useNativeDriver: true,
+        useNativeDriver: false,
       }),
     ]).start();
   };
 
   const collapseSidebar = () => {
-    setIsExpanded(false);
-    onExpandedChange?.(false);
     Animated.parallel([
       Animated.timing(widthAnim, {
         toValue: COLLAPSED_WIDTH,
@@ -85,34 +81,32 @@ export const TVSidebar: React.FC<TVSidebarProps> = ({
       Animated.timing(labelOpacity, {
         toValue: 0,
         duration: 140,
-        useNativeDriver: true,
+        useNativeDriver: false,
       }),
-    ]).start();
+    ]).start(() => {
+      onExpandedChange?.(false);
+    });
   };
 
   const handleItemFocus = (id: NavTabId) => {
+    if (blurTimerRef.current) {
+      clearTimeout(blurTimerRef.current);
+      blurTimerRef.current = null;
+    }
     setFocusedTab(id);
     expandSidebar();
     onFocusSidebar?.();
   };
 
   const handleItemBlur = () => {
-    // Delay sedikit agar perpindahan D-Pad antar item menu tidak langsung menutup sidebar
-    setTimeout(() => {
-      setFocusedTab((prev) => {
-        if (!prev) {
-          collapseSidebar();
-          onBlurSidebar?.();
-        }
-        return prev;
-      });
-    }, 50);
-  };
-
-  const handleSidebarBlur = () => {
-    setFocusedTab(null);
-    collapseSidebar();
-    onBlurSidebar?.();
+    if (blurTimerRef.current) {
+      clearTimeout(blurTimerRef.current);
+    }
+    blurTimerRef.current = setTimeout(() => {
+      setFocusedTab(null);
+      collapseSidebar();
+      onBlurSidebar?.();
+    }, 120);
   };
 
   return (
@@ -120,7 +114,6 @@ export const TVSidebar: React.FC<TVSidebarProps> = ({
       style={[
         styles.sidebarContainer,
         { width: widthAnim },
-        isExpanded && styles.sidebarExpanded,
       ]}
     >
       {/* Brand Icon Mini-Header */}
@@ -128,34 +121,33 @@ export const TVSidebar: React.FC<TVSidebarProps> = ({
         <View style={styles.brandCircle}>
           <Tv size={22} color={Colors.primary} />
         </View>
-        {isExpanded && (
-          <Animated.View style={[styles.brandTextWrapper, { opacity: labelOpacity }]}>
-            <Text style={styles.brandTitle}>
-              KUZEN<Text style={{ color: Colors.primary }}> TV</Text>
-            </Text>
-          </Animated.View>
-        )}
+        <Animated.View
+          style={[
+            styles.brandTextWrapper,
+            { opacity: labelOpacity },
+          ]}
+        >
+          <Text style={styles.brandTitle} numberOfLines={1}>
+            KUZEN<Text style={{ color: Colors.primary }}> TV</Text>
+          </Text>
+        </Animated.View>
       </View>
 
       {/* Navigation Buttons List */}
       <View style={styles.navItemsList}>
-        {NAV_ITEMS.map((item) => {
+        {NAV_ITEMS.map((item, index) => {
           const IconComponent = item.icon;
           const isActive = activeTab === item.id;
           const isFocused = focusedTab === item.id;
 
           return (
-            <TouchableOpacity
+            <Pressable
               key={item.id}
-              activeOpacity={0.85}
+              focusable={true}
+              hasTVPreferredFocus={index === 0}
               onFocus={() => handleItemFocus(item.id)}
-              onBlur={() => {
-                setFocusedTab(null);
-                handleSidebarBlur();
-              }}
-              onPress={() => {
-                onSelectTab(item.id);
-              }}
+              onBlur={handleItemBlur}
+              onPress={() => onSelectTab(item.id)}
               style={[
                 styles.navButton,
                 isActive && styles.navButtonActive,
@@ -179,27 +171,30 @@ export const TVSidebar: React.FC<TVSidebarProps> = ({
               </View>
 
               {/* YouTube TV Animated Label Fade-in */}
-              {isExpanded && (
-                <Animated.Text
-                  style={[
-                    styles.navLabel,
-                    isActive && styles.navLabelActive,
-                    isFocused && styles.navLabelFocused,
-                    { opacity: labelOpacity },
-                  ]}
-                  numberOfLines={1}
-                >
-                  {item.label}
-                </Animated.Text>
-              )}
-            </TouchableOpacity>
+              <Animated.Text
+                style={[
+                  styles.navLabel,
+                  isActive && styles.navLabelActive,
+                  isFocused && styles.navLabelFocused,
+                  { opacity: labelOpacity },
+                ]}
+                numberOfLines={1}
+              >
+                {item.label}
+              </Animated.Text>
+            </Pressable>
           );
         })}
       </View>
 
       {/* App Version at bottom */}
       <View style={styles.footerContainer}>
-        <Text style={styles.footerText}>{isExpanded ? 'Kuzen TV v1.0' : 'v1.0'}</Text>
+        <Animated.Text
+          style={[styles.footerText, { opacity: labelOpacity }]}
+          numberOfLines={1}
+        >
+          Kuzen TV v1.0
+        </Animated.Text>
       </View>
     </Animated.View>
   );
@@ -207,6 +202,10 @@ export const TVSidebar: React.FC<TVSidebarProps> = ({
 
 const styles = StyleSheet.create({
   sidebarContainer: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
     backgroundColor: '#0d0d0d',
     borderRightWidth: 1,
     borderRightColor: Colors.borderMuted,
@@ -214,26 +213,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     justifyContent: 'space-between',
     zIndex: 100,
-    elevation: 8,
-  },
-  sidebarExpanded: {
-    backgroundColor: '#121212',
-    borderRightColor: 'rgba(234, 88, 12, 0.25)',
-    shadowColor: '#000000',
-    shadowOffset: { width: 8, height: 0 },
-    shadowOpacity: 0.7,
-    shadowRadius: 16,
     elevation: 20,
+    overflow: 'hidden',
   },
   brandIconWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 28,
-    paddingLeft: 2,
   },
   brandCircle: {
-    width: 44,
-    height: 44,
+    width: 46,
+    height: 46,
     borderRadius: 12,
     backgroundColor: 'rgba(234, 88, 12, 0.15)',
     justifyContent: 'center',
@@ -243,6 +233,7 @@ const styles = StyleSheet.create({
   },
   brandTextWrapper: {
     marginLeft: 12,
+    width: 140,
   },
   brandTitle: {
     fontSize: 20,
@@ -252,30 +243,30 @@ const styles = StyleSheet.create({
   },
   navItemsList: {
     flex: 1,
-    gap: 8,
+    gap: 10,
   },
   navButton: {
     flexDirection: 'row',
     alignItems: 'center',
     height: 48,
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    borderWidth: 2,
+    borderRadius: 12,
+    borderWidth: 2.5,
     borderColor: 'transparent',
     overflow: 'hidden',
   },
   navButtonActive: {
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
   },
   navButtonFocused: {
     backgroundColor: Colors.primary, // Kuzen Orange
-    borderColor: '#FFFFFF',
+    borderColor: '#FFFFFF', // OUTLINE PUTIH TEBAL
+    borderWidth: 2.5,
     transform: [{ scale: 1.04 }],
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.6,
-    shadowRadius: 8,
-    elevation: 10,
+    shadowColor: '#FFFFFF',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.85,
+    shadowRadius: 10,
+    elevation: 12,
   },
   activeBar: {
     position: 'absolute',
@@ -286,20 +277,20 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
   },
   iconContainer: {
-    width: 32,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: 4,
   },
   navLabel: {
     color: Colors.textMuted,
     fontSize: 14,
     fontWeight: '600',
-    marginLeft: 12,
-    flex: 1,
+    marginLeft: 10,
+    width: 130,
   },
   navLabelActive: {
-    color: Colors.primary,
+    color: '#FFFFFF',
     fontWeight: '700',
   },
   navLabelFocused: {
@@ -307,14 +298,14 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   footerContainer: {
-    alignItems: 'center',
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.05)',
+    height: 24,
+    justifyContent: 'center',
+    paddingLeft: 4,
   },
   footerText: {
+    color: Colors.textMuted,
     fontSize: 11,
-    color: '#555555',
-    fontWeight: '600',
+    fontWeight: '500',
+    width: 150,
   },
 });

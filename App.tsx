@@ -5,13 +5,13 @@ import {
   StatusBar,
 } from 'react-native';
 import { Colors } from './src/constants/Colors';
-import { TVSidebar, NavTabId } from './src/components/TVSidebar';
+import { TVSidebar, NavTabId, COLLAPSED_WIDTH, EXPANDED_WIDTH } from './src/components/TVSidebar';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { AnimeScreen } from './src/screens/AnimeScreen';
 import { DonghuaScreen } from './src/screens/DonghuaScreen';
 import { HistoryScreen } from './src/screens/HistoryScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
-import { TVMediaModal } from './src/components/TVMediaModal';
+import { DetailScreen } from './src/screens/DetailScreen';
 import { TVNativePlayer } from './src/components/player/TVNativePlayer';
 import { MediaItem } from './src/services/mediaService';
 import { HistoryItem } from './src/services/userService';
@@ -25,16 +25,13 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<NavTabId>('home');
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<MediaItem | null>(null);
-  const [modalVisible, setModalVisible] = useState(false);
   const [activePlayback, setActivePlayback] = useState<ActiveEpisodeState | null>(null);
 
   const handleSelectMedia = (item: MediaItem) => {
     setSelectedMedia(item);
-    setModalVisible(true);
   };
 
   const handleSelectHistory = (history: HistoryItem) => {
-    // Langsung putar riwayat atau buka episode picker
     setActivePlayback({
       media: {
         title: history.anime_title,
@@ -53,7 +50,6 @@ export default function App() {
     episode: { title: string; slug: string },
     media: MediaItem
   ) => {
-    setModalVisible(false);
     setActivePlayback({ media, episode });
   };
 
@@ -67,6 +63,17 @@ export default function App() {
   };
 
   const renderActiveScreen = () => {
+    // If a media is selected, render the full-page Netflix-style Detail Screen
+    if (selectedMedia) {
+      return (
+        <DetailScreen
+          item={selectedMedia}
+          onBack={() => setSelectedMedia(null)}
+          onSelectEpisode={handleSelectEpisode}
+        />
+      );
+    }
+
     switch (activeTab) {
       case 'home':
         return <HomeScreen onSelectItem={handleSelectMedia} />;
@@ -87,32 +94,27 @@ export default function App() {
     <View style={styles.appContainer}>
       <StatusBar hidden />
 
-      {/* YouTube TV Collapsible / Expandable Sidebar Rail */}
-      <TVSidebar
-        activeTab={activeTab}
-        onSelectTab={(tab) => {
-          setActiveTab(tab);
-        }}
-        onExpandedChange={setIsSidebarExpanded}
-      />
-
-      {/* Main Content Viewport */}
+      {/* Main Content Viewport (offset by 72px for the slim collapsed rail) */}
       <View style={styles.mainViewport}>
         {renderActiveScreen()}
-
-        {/* Dimming Backdrop overlay when Sidebar is expanded (YouTube TV style) */}
-        {isSidebarExpanded && (
-          <View pointerEvents="none" style={styles.dimmingOverlay} />
-        )}
       </View>
 
-      {/* Media Detail & Episode Selector Modal */}
-      <TVMediaModal
-        visible={modalVisible}
-        item={selectedMedia}
-        onClose={() => setModalVisible(false)}
-        onSelectEpisode={handleSelectEpisode}
-      />
+      {/* Dimming Backdrop overlay when Sidebar is expanded (YouTube TV style) */}
+      {!activePlayback && isSidebarExpanded && (
+        <View pointerEvents="none" style={styles.dimmingOverlay} />
+      )}
+
+      {/* YouTube TV Collapsible Floating Sidebar Rail */}
+      {!activePlayback && (
+        <TVSidebar
+          activeTab={activeTab}
+          onSelectTab={(tab) => {
+            setSelectedMedia(null);
+            setActiveTab(tab);
+          }}
+          onExpandedChange={setIsSidebarExpanded}
+        />
+      )}
 
       {/* Native TV Video Player Overlay (Full-screen) */}
       {activePlayback && (
@@ -134,16 +136,21 @@ export default function App() {
 const styles = StyleSheet.create({
   appContainer: {
     flex: 1,
-    flexDirection: 'row',
     backgroundColor: Colors.background, // Deep dark TV background #0a0a0a
   },
   mainViewport: {
     flex: 1,
     paddingTop: 24,
-    paddingHorizontal: 36,
+    paddingRight: 36,
+    paddingLeft: COLLAPSED_WIDTH + 24, // 72px rail + 24px margin
   },
   dimmingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: EXPANDED_WIDTH,
+    right: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    zIndex: 90,
   },
 });

@@ -4,7 +4,7 @@ import {
   Text,
   View,
   ImageBackground,
-  TouchableOpacity,
+  Pressable,
   Dimensions,
 } from 'react-native';
 import { Colors } from '../constants/Colors';
@@ -67,14 +67,13 @@ export const TVHeroBanner: React.FC<TVHeroBannerProps> = ({
 
             {/* Description Snippet */}
             <Text style={styles.description} numberOfLines={3}>
-              Tonton rilis episode terbaru dalam kualitas Full HD 1080p dengan server HLS cepat dan subtitle Indonesia.
+              Tonton episode terbaru dengan takarir Indonesia dan pemutar video cepat.
             </Text>
 
             {/* Action Buttons Row */}
             <View style={styles.actionsRow}>
-              <TouchableOpacity
-                activeOpacity={0.9}
-                hasTVPreferredFocus={true}
+              <Pressable
+                focusable={true}
                 onFocus={() => setFocusedBtn('play')}
                 onBlur={() => setFocusedBtn(null)}
                 onPress={() => onPlayPress(item)}
@@ -97,10 +96,10 @@ export const TVHeroBanner: React.FC<TVHeroBannerProps> = ({
                 >
                   Tonton Sekarang
                 </Text>
-              </TouchableOpacity>
+              </Pressable>
 
-              <TouchableOpacity
-                activeOpacity={0.9}
+              <Pressable
+                focusable={true}
                 onFocus={() => setFocusedBtn('info')}
                 onBlur={() => setFocusedBtn(null)}
                 onPress={() => onDetailPress(item)}
@@ -112,7 +111,7 @@ export const TVHeroBanner: React.FC<TVHeroBannerProps> = ({
               >
                 <Info
                   size={18}
-                  color={focusedBtn === 'info' ? Colors.primary : Colors.textMuted}
+                  color={focusedBtn === 'info' ? '#FFFFFF' : Colors.textMuted}
                 />
                 <Text
                   style={[
@@ -122,7 +121,7 @@ export const TVHeroBanner: React.FC<TVHeroBannerProps> = ({
                 >
                   Detail Info
                 </Text>
-              </TouchableOpacity>
+              </Pressable>
             </View>
           </View>
         </View>
@@ -138,23 +137,21 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     overflow: 'hidden',
     marginBottom: 28,
-    backgroundColor: '#121212',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    backgroundColor: '#161615',
+    elevation: 6,
   },
   backgroundImage: {
     width: '100%',
     height: '100%',
   },
   gradientOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(10, 10, 10, 0.78)',
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 40,
+    flex: 1,
+    backgroundColor: 'rgba(10, 10, 10, 0.72)',
+    justifyContent: 'flex-end',
+    padding: 32,
   },
   contentContainer: {
-    maxWidth: 580,
+    maxWidth: 620,
   },
   metaRow: {
     flexDirection: 'row',
@@ -163,22 +160,24 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   sourceTag: {
-    backgroundColor: Colors.primary,
+    backgroundColor: 'rgba(234, 88, 12, 0.25)',
+    borderWidth: 1,
+    borderColor: Colors.primary,
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: 4,
+    borderRadius: 5,
   },
   sourceText: {
-    color: '#FFFFFF',
-    fontSize: 10,
+    color: Colors.primary,
+    fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.5,
   },
   statusTag: {
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: 4,
+    borderRadius: 5,
   },
   statusText: {
     color: '#E5E5E5',
@@ -188,15 +187,15 @@ const styles = StyleSheet.create({
   ratingBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 4,
     gap: 4,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 5,
   },
   ratingText: {
-    color: '#FFFFFF',
-    fontSize: 11,
+    color: '#FBBF24',
+    fontSize: 12,
     fontWeight: '700',
   },
   title: {
@@ -222,9 +221,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 10,
     paddingHorizontal: 20,
-    borderRadius: 8,
+    borderRadius: 10,
     gap: 8,
-    borderWidth: 2,
+    borderWidth: 2.5,
     borderColor: 'transparent',
   },
   playButton: {
@@ -232,9 +231,14 @@ const styles = StyleSheet.create({
   },
   playButtonFocused: {
     backgroundColor: Colors.primary, // Kuzen Orange
-    borderColor: '#FFFFFF',
+    borderColor: '#FFFFFF', // OUTLINE PUTIH
+    borderWidth: 2.5,
     transform: [{ scale: 1.05 }],
-    elevation: 8,
+    shadowColor: '#FFFFFF',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.85,
+    shadowRadius: 10,
+    elevation: 10,
   },
   playButtonText: {
     color: '#0a0a0a',
@@ -248,9 +252,15 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.12)',
   },
   infoButtonFocused: {
-    borderColor: Colors.primary,
-    backgroundColor: 'rgba(234, 88, 12, 0.25)',
+    borderColor: '#FFFFFF', // OUTLINE PUTIH
+    borderWidth: 2.5,
+    backgroundColor: 'rgba(234, 88, 12, 0.35)',
     transform: [{ scale: 1.05 }],
+    shadowColor: '#FFFFFF',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.85,
+    shadowRadius: 10,
+    elevation: 10,
   },
   infoButtonText: {
     color: '#FFFFFF',
@@ -258,7 +268,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   infoButtonTextFocused: {
-    color: Colors.primary,
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
 });
-

@@ -1,10 +1,10 @@
 /**
- * Standalone HTML5 + HLS.js Player Template for Kuramadrive & direct .m3u8 streams on Android TV
+ * Standalone HTML5 + HLS.js Player Template for Kuramadrive & direct .m3u8 streams
  * Features:
  * 1. Embedded Hls.js with native fallback
  * 2. Complete telemetry bridge via window.ReactNativeWebView.postMessage (video_ready, timeupdate, playstate, buffering, progress, seeked)
- * 3. Remote control bridge via window.__QUETTA_EXEC__(action, value) for TV Remote D-Pad actions
- * 4. Tap-highlight elimination & full-bleed 1080p responsive layout
+ * 3. Remote control bridge via window.__QUETTA_EXEC__(action, value) for native Kuzen controls
+ * 4. Tap-highlight elimination & full-bleed responsive layout
  */
 
 export interface HlsPlayerTemplateOptions {
@@ -68,7 +68,7 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
                 } catch(e) {}
             }
 
-            // Expose Remote Control untuk Native TV D-Pad Controls
+            // Expose Remote Control untuk Native Quetta Controls
             window.__QUETTA_EXEC__ = function(action, val) {
                 try {
                     if (action === 'PLAY') {
@@ -280,4 +280,3 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
 </body>
 </html>`;
 }
-

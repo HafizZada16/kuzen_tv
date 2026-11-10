@@ -62,7 +62,7 @@ const styles = StyleSheet.create({
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 8,
     gap: 8,
   },
   iconWrapper: {
@@ -78,6 +78,6 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingRight: 40,
     paddingLeft: 4,
+    paddingVertical: 14,
   },
 });
-

@@ -3,7 +3,7 @@ import {
   StyleSheet,
   Text,
   View,
-  TouchableOpacity,
+  Pressable,
   Image,
   Animated,
 } from 'react-native';
@@ -43,10 +43,10 @@ export const TVFocusableCard: React.FC<TVFocusableCardProps> = ({
   const handleFocus = () => {
     setIsFocused(true);
     Animated.spring(scaleAnim, {
-      toValue: 1.08,
+      toValue: 1.06,
       useNativeDriver: true,
       friction: 6,
-      tension: 100,
+      tension: 120,
     }).start();
     onFocus?.();
   };
@@ -57,14 +57,14 @@ export const TVFocusableCard: React.FC<TVFocusableCardProps> = ({
       toValue: 1.0,
       useNativeDriver: true,
       friction: 6,
-      tension: 100,
+      tension: 120,
     }).start();
     onBlur?.();
   };
 
   return (
-    <TouchableOpacity
-      activeOpacity={0.9}
+    <Pressable
+      focusable={true}
       hasTVPreferredFocus={hasTVPreferredFocus}
       onFocus={handleFocus}
       onBlur={handleBlur}
@@ -128,48 +128,50 @@ export const TVFocusableCard: React.FC<TVFocusableCardProps> = ({
           ) : null}
         </View>
       </Animated.View>
-    </TouchableOpacity>
+    </Pressable>
   );
 };
 
 const styles = StyleSheet.create({
   touchableWrapper: {
-    marginRight: 16,
-    marginVertical: 12,
+    marginRight: 18,
+    marginVertical: 10,
   },
   cardContainer: {
     borderRadius: 12,
     backgroundColor: Colors.card,
     overflow: 'hidden',
-    borderWidth: 2,
+    borderWidth: 3,
     borderColor: 'transparent',
     elevation: 3,
   },
   cardFocused: {
-    borderColor: Colors.primary, // Kuzen Orange #ea580c
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.65,
+    borderColor: '#FFFFFF', // Outline PUTIH cerah & jelas sesuai instruksi remote Android TV!
+    borderWidth: 3.5,
+    shadowColor: '#FFFFFF',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.85,
     shadowRadius: 10,
-    elevation: 12,
+    elevation: 14,
   },
   posterImage: {
     width: '100%',
     height: '100%',
-    backgroundColor: '#1C1C1E',
+    position: 'absolute',
   },
   imageOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(10, 10, 10, 0.45)',
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
   },
   badgeRow: {
     position: 'absolute',
-    top: 8,
-    left: 8,
-    right: 8,
+    top: 10,
+    left: 10,
+    right: 10,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    zIndex: 10,
   },
   ratingBadge: {
     flexDirection: 'row',
@@ -179,70 +181,70 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 6,
     gap: 4,
-    borderWidth: 0.5,
-    borderColor: 'rgba(251, 191, 36, 0.4)',
   },
   ratingText: {
-    color: '#FFFFFF',
+    color: '#FBBF24',
     fontSize: 11,
     fontWeight: '700',
   },
   statusBadge: {
-    backgroundColor: 'rgba(234, 88, 12, 0.9)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 5,
+    backgroundColor: 'rgba(234, 88, 12, 0.85)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
     maxWidth: 90,
   },
   badgeText: {
     color: '#FFFFFF',
     fontSize: 10,
     fontWeight: '700',
-    textTransform: 'uppercase',
   },
   playIconContainer: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
+    zIndex: 15,
   },
   playIconCircle: {
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: Colors.primary,
+    backgroundColor: 'rgba(234, 88, 12, 0.95)',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
+    shadowColor: '#000000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.5,
-    shadowRadius: 6,
-    elevation: 8,
+    shadowRadius: 8,
+    elevation: 6,
   },
   detailsContainer: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
     backgroundColor: 'rgba(10, 10, 10, 0.92)',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.08)',
+    borderBottomLeftRadius: 9,
+    borderBottomRightRadius: 9,
   },
   title: {
-    color: '#FFFFFF',
+    color: '#E5E5E5',
     fontSize: 13,
     fontWeight: '600',
-    lineHeight: 17,
+    lineHeight: 18,
   },
   titleFocused: {
-    color: Colors.primary,
-    fontWeight: '700',
+    color: '#FFFFFF',
+    fontWeight: '800',
   },
   subtitle: {
     color: Colors.textMuted,
     fontSize: 11,
-    marginTop: 2,
+    marginTop: 3,
+    fontWeight: '500',
   },
 });
-
