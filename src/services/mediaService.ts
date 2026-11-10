@@ -265,12 +265,15 @@ export async function fetchAnimeWatch(slug: string, forceRefresh: boolean = fals
   if (!episodes || episodes.length === 0) {
     try {
       const seriesSlug = slug.split('-episode-')[0];
-      const cachedSeries = getCachedAnimeDetail(seriesSlug);
+      let cachedSeries = getCachedAnimeDetail(seriesSlug);
+      if (!cachedSeries && !seriesSlug.endsWith('-sub-indo')) {
+        cachedSeries = getCachedAnimeDetail(`${seriesSlug}-sub-indo`);
+      }
       if (cachedSeries && cachedSeries.episodes && cachedSeries.episodes.length > 0) {
         episodes = cachedSeries.episodes;
       } else {
-        const detailRes = await api.get(`/detail/${seriesSlug}`);
-        const detailData = detailRes.data.data || detailRes.data;
+        const detailRes = await api.get(`/detail/${seriesSlug}`).catch(() => api.get(`/detail/${seriesSlug}-sub-indo`));
+        const detailData = detailRes?.data?.data || detailRes?.data;
         if (detailData && (detailData.episodeList || detailData.episodes)) {
           episodes = detailData.episodeList || detailData.episodes;
         }

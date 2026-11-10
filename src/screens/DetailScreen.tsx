@@ -22,7 +22,11 @@ import { ArrowLeft, Play, Star, Calendar, CheckCircle, Tag } from 'lucide-react-
 interface DetailScreenProps {
   item: MediaItem;
   onBack: () => void;
-  onSelectEpisode: (episode: { title: string; slug: string }, media: MediaItem) => void;
+  onSelectEpisode: (
+    episode: { title: string; slug: string },
+    media: MediaItem,
+    episodes?: { title: string; slug: string }[]
+  ) => void;
 }
 
 /**
@@ -195,7 +199,7 @@ export const DetailScreen: React.FC<DetailScreenProps> = ({
               hasTVPreferredFocus={true}
               onFocus={() => setFocusedBtn('play-primary')}
               onBlur={() => setFocusedBtn(null)}
-              onPress={() => onSelectEpisode(firstEpisode, item)}
+              onPress={() => onSelectEpisode(firstEpisode, item, episodes)}
               style={[
                 styles.primaryPlayButton,
                 focusedBtn === 'play-primary' && styles.primaryPlayButtonFocused,
@@ -249,7 +253,7 @@ export const DetailScreen: React.FC<DetailScreenProps> = ({
                   focusable={true}
                   onFocus={() => setFocusedBtn(`ep-${ep.slug}`)}
                   onBlur={() => setFocusedBtn(null)}
-                  onPress={() => onSelectEpisode(ep, item)}
+                  onPress={() => onSelectEpisode(ep, item, episodes)}
                   style={[
                     styles.episodeButton,
                     isFocused && styles.episodeButtonFocused,

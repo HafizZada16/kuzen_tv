@@ -19,6 +19,7 @@ import { HistoryItem } from './src/services/userService';
 interface ActiveEpisodeState {
   media: MediaItem;
   episode: { title: string; slug: string };
+  episodes?: { title: string; slug: string }[];
 }
 
 export default function App() {
@@ -48,9 +49,10 @@ export default function App() {
 
   const handleSelectEpisode = (
     episode: { title: string; slug: string },
-    media: MediaItem
+    media: MediaItem,
+    episodes?: { title: string; slug: string }[]
   ) => {
-    setActivePlayback({ media, episode });
+    setActivePlayback({ media, episode, episodes });
   };
 
   const handleEpisodeChange = (newEpisodeSlug: string, newEpisodeTitle: string) => {
@@ -58,6 +60,7 @@ export default function App() {
       setActivePlayback({
         media: activePlayback.media,
         episode: { slug: newEpisodeSlug, title: newEpisodeTitle },
+        episodes: activePlayback.episodes,
       });
     }
   };
@@ -95,7 +98,12 @@ export default function App() {
       <StatusBar hidden />
 
       {/* Main Content Viewport (offset by 72px for the slim collapsed rail) */}
-      <View style={styles.mainViewport}>
+      <View
+        style={[
+          styles.mainViewport,
+          activePlayback ? { display: 'none' } : undefined,
+        ]}
+      >
         {renderActiveScreen()}
       </View>
 
@@ -124,6 +132,7 @@ export default function App() {
           animeThumb={activePlayback.media.thumb}
           episodeSlug={activePlayback.episode.slug}
           episodeTitle={activePlayback.episode.title}
+          episodes={activePlayback.episodes}
           source={activePlayback.media.type === 'donghua' ? 'anichin' : 'otakudesu'}
           onClose={() => setActivePlayback(null)}
           onEpisodeChange={handleEpisodeChange}

@@ -187,7 +187,6 @@ export function buildQuettaInjectedScript(options: QuettaScriptOptions = {}): st
             '.viewer-video-controls',
             '.viewer-bottom-bar',
             '.video-bottom-controls',
-  
             '.mega-video-controls',
             '.mega-controls',
             '[class*="viewer-bottom"]',
@@ -225,13 +224,28 @@ export function buildQuettaInjectedScript(options: QuettaScriptOptions = {}): st
           }
         }, 500);
       } catch (e) {}
- 
+
       var capturedVideo = null;
       var userWantsPaused = false;
       var hasStartedPlayback = false;
       var fallbackMetaDuration = ${fallbackMetaDuration};
       window.__QUETTA_INITIAL_RESUMED__ = false;
       window.__QUETTA_RESUME_TIMER__ = null;
+
+      // Bulletproof Play Guard: When user explicitly pauses, intercept and reject ANY rogue
+      // third-party embed script or internal timer attempting to force HTMLMediaElement.play()
+      try {
+        if (!window.__quetta_play_guard_installed__) {
+          window.__quetta_play_guard_installed__ = true;
+          var origMediaPlay = HTMLMediaElement.prototype.play;
+          HTMLMediaElement.prototype.play = function() {
+            if (userWantsPaused) {
+              return Promise.reject(new Error('Playback paused by user'));
+            }
+            return origMediaPlay.apply(this, arguments);
+          };
+        }
+      } catch(e) {}
 
       // MediaSource duration patch: Prevent browser HTML5 engine from clamping seek to partial MSE buffer length
       try {
@@ -384,6 +398,18 @@ export function buildQuettaInjectedScript(options: QuettaScriptOptions = {}): st
         v.setAttribute('webkit-playsinline', '');
         isolateVideo(v);
 
+        // Instance play guard
+        if (!v.__quetta_instance_play_guarded__) {
+          v.__quetta_instance_play_guarded__ = true;
+          var origVPlay = v.play;
+          v.play = function() {
+            if (userWantsPaused) {
+              return Promise.reject(new Error('Playback paused by user'));
+            }
+            return origVPlay.apply(this, arguments);
+          };
+        }
+
         try {
           var obs = new MutationObserver(function() {
             if (v.hasAttribute('controls')) v.removeAttribute('controls');
@@ -454,13 +480,19 @@ export function buildQuettaInjectedScript(options: QuettaScriptOptions = {}): st
           }));
         });
         v.addEventListener('play', function() {
-          userWantsPaused = false;
+          if (userWantsPaused) {
+            try { v.pause(); } catch(e) {}
+            return;
+          }
           isolateVideo(v);
           window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'playstate', isPlaying: true }));
         });
         v.addEventListener('playing', function() {
+          if (userWantsPaused) {
+            try { v.pause(); } catch(e) {}
+            return;
+          }
           hasStartedPlayback = true;
-          userWantsPaused = false;
           if (clickInterval) { clearInterval(clickInterval); clickInterval = null; }
           isolateVideo(v);
           window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'playstate', isPlaying: true }));
@@ -594,41 +626,189 @@ export function buildQuettaInjectedScript(options: QuettaScriptOptions = {}): st
             try { v.removeEventListener('canplay', onCanPlayResume); } catch(e) {}
             applyResumeTime();
           };
+          v.addEventListener('canplay', onCanPlayResume);
+
+          var onLoadedDataResume = function() {
+            try { v.removeEventListener('loadeddata', onLoadedDataResume); } catch(e) {}
+            applyResumeTime();
+          };
+          v.addEventListener('loadeddata', onLoadedDataResume);
+
           var onPlayingResume = function() {
             try { v.removeEventListener('playing', onPlayingResume); } catch(e) {}
             applyResumeTime();
           };
-          v.addEventListener('canplay', onCanPlayResume);
           v.addEventListener('playing', onPlayingResume);
-          if (v.readyState >= 2) applyResumeTime();
         }
       }
 
-      // 1. Prototype Hooking
-      try {
-        var origPlay = HTMLMediaElement.prototype.play;
-        HTMLMediaElement.prototype.play = function() {
-          if (this instanceof HTMLVideoElement) setupVideo(this);
-          return origPlay.apply(this, arguments);
-        };
-        var origLoad = HTMLMediaElement.prototype.load;
-        HTMLMediaElement.prototype.load = function() {
-          if (this instanceof HTMLVideoElement) setupVideo(this);
-          return origLoad.apply(this, arguments);
-        };
-      } catch(e) {}
+      // Initial video detection & setup
+      var existing = document.getElementsByTagName('video');
+      for (var i = 0; i < existing.length; i++) {
+        setupVideo(existing[i]);
+      }
 
+      // 1. Synthetic User Input Dispatcher (Bypasses programmatic click restrictions)
       function triggerClick(el) {
         if (!el) return;
-        try { el.click(); } catch(e) {}
         try {
           var rect = el.getBoundingClientRect();
-          var x = rect.left + rect.width / 2;
-          var y = rect.top + rect.height / 2;
-          ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click'].forEach(function(type) {
-            var evt = new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y });
+          var clientX = rect.left + (rect.width > 0 ? rect.width / 2 : 10);
+          var clientY = rect.top + (rect.height > 0 ? rect.height / 2 : 10);
+
+          ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(function(type) {
+            var evt;
+            try {
+              evt = new PointerEvent(type, {
+                bubbles: true,
+                cancelable: true,
+                isTrusted: true,
+                view: window,
+                clientX: clientX,
+                clientY: clientY
+              });
+            } catch (err) {
+              evt = new MouseEvent(type, {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                clientX: clientX,
+                clientY: clientY
+              });
+            }
             el.dispatchEvent(evt);
           });
+        } catch(e) {}
+      }
+
+      // Unified Pause Action: Pauses native video AND all known 3rd-party web players
+      function doPause() {
+        userWantsPaused = true;
+        if (clickInterval) {
+          clearInterval(clickInterval);
+          clickInterval = null;
+        }
+        if (window.__QUETTA_RESUME_TIMER__) {
+          clearInterval(window.__QUETTA_RESUME_TIMER__);
+          window.__QUETTA_RESUME_TIMER__ = null;
+        }
+
+        // 1. Pause captured video & all video elements
+        if (capturedVideo) {
+          try { capturedVideo.pause(); } catch(e) {}
+          isolateVideo(capturedVideo);
+        }
+        try {
+          var vids = document.getElementsByTagName('video');
+          for (var vi = 0; vi < vids.length; vi++) {
+            try { vids[vi].pause(); } catch(e) {}
+          }
+        } catch(e) {}
+
+        // 2. Command 3rd party video player engines explicitly to pause
+        try {
+          // PlayerJS (Odstream, StreamHide, VidHide, Desustream)
+          if (window.playerjs && typeof window.playerjs.api === 'function') {
+            try { window.playerjs.api('pause'); } catch(e) {}
+          }
+          if (window.pljssglobal && Array.isArray(window.pljssglobal)) {
+            window.pljssglobal.forEach(function(p) {
+              if (p && typeof p.api === 'function') try { p.api('pause'); } catch(e) {}
+            });
+          }
+
+          // JWPlayer (VidHide, Earnvids, Doodstream)
+          if (window.jwplayer && typeof window.jwplayer === 'function') {
+            try {
+              var jw = window.jwplayer();
+              if (!jw || typeof jw.pause !== 'function') {
+                jw = (typeof window.jwplayer === 'function' && window.jwplayer(0)) || 
+                     (typeof window.jwplayer === 'function' && window.jwplayer('vplayer')) || 
+                     (typeof window.jwplayer === 'function' && window.jwplayer('player'));
+              }
+              if (jw && typeof jw.pause === 'function') jw.pause();
+            } catch(e) {}
+          }
+
+          // Video.js
+          if (window.videojs && typeof window.videojs.getAllPlayers === 'function') {
+            try {
+              var allP = window.videojs.getAllPlayers();
+              for (var pi = 0; pi < allP.length; pi++) {
+                if (allP[pi] && typeof allP[pi].pause === 'function') allP[pi].pause();
+              }
+            } catch(e) {}
+          }
+
+          // Mega.nz Player
+          if (window.megaPlayer && typeof window.megaPlayer.pause === 'function') {
+            try { window.megaPlayer.pause(); } catch(e) {}
+          }
+        } catch(e) {}
+
+        try {
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'playstate', isPlaying: false }));
+        } catch(e) {}
+      }
+
+      // Unified Play Action: Resumes native video AND all known 3rd-party web players
+      function doPlay() {
+        userWantsPaused = false;
+        hasStartedPlayback = true;
+        if (clickInterval) {
+          clearInterval(clickInterval);
+          clickInterval = null;
+        }
+
+        if (capturedVideo) {
+          capturedVideo.play().then(function() {
+            isolateVideo(capturedVideo);
+            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'playstate', isPlaying: true }));
+            if (!window.__QUETTA_INITIAL_RESUMED__ && ${ctxTime} > 2) {
+              try {
+                if (typeof capturedVideo.fastSeek === 'function') {
+                  capturedVideo.fastSeek(${ctxTime});
+                } else {
+                  capturedVideo.currentTime = ${ctxTime};
+                }
+              } catch(e) {}
+              triggerMegaSeek(${ctxTime});
+            }
+          }).catch(function(){});
+        }
+
+        // Also trigger 3rd party engines
+        try {
+          if (window.playerjs && typeof window.playerjs.api === 'function') {
+            try { window.playerjs.api('play'); } catch(e) {}
+          }
+          if (window.pljssglobal && Array.isArray(window.pljssglobal)) {
+            window.pljssglobal.forEach(function(p) {
+              if (p && typeof p.api === 'function') try { p.api('play'); } catch(e) {}
+            });
+          }
+          if (window.jwplayer && typeof window.jwplayer === 'function') {
+            try {
+              var jw = window.jwplayer();
+              if (!jw || typeof jw.play !== 'function') {
+                jw = (typeof window.jwplayer === 'function' && window.jwplayer(0)) || 
+                     (typeof window.jwplayer === 'function' && window.jwplayer('vplayer')) || 
+                     (typeof window.jwplayer === 'function' && window.jwplayer('player'));
+              }
+              if (jw && typeof jw.play === 'function') jw.play();
+            } catch(e) {}
+          }
+          if (window.videojs && typeof window.videojs.getAllPlayers === 'function') {
+            try {
+              var allP = window.videojs.getAllPlayers();
+              for (var pj = 0; pj < allP.length; pj++) {
+                if (allP[pj] && typeof allP[pj].play === 'function') allP[pj].play();
+              }
+            } catch(e) {}
+          }
+          if (window.megaPlayer && typeof window.megaPlayer.play === 'function') {
+            try { window.megaPlayer.play(); } catch(e) {}
+          }
         } catch(e) {}
       }
 
@@ -643,12 +823,6 @@ export function buildQuettaInjectedScript(options: QuettaScriptOptions = {}): st
           }
         }
 
-        if (action === 'PAUSE') {
-          userWantsPaused = true;
-        } else if (action === 'PLAY') {
-          userWantsPaused = false;
-        }
-
         if (clickInterval) {
           clearInterval(clickInterval); // Stop auto-clicker immediately on any manual user command
           clickInterval = null;
@@ -659,61 +833,28 @@ export function buildQuettaInjectedScript(options: QuettaScriptOptions = {}): st
           if (vids.length > 0) setupVideo(vids[0]);
         }
 
-        // Direct HTML5 video control (Priority 1: clean, no button interference)
-        if (capturedVideo) {
-          isolateVideo(capturedVideo);
-          if (action === 'PLAY') {
-            userWantsPaused = false;
-            capturedVideo.play().then(function() {
-              isolateVideo(capturedVideo);
-              window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'playstate', isPlaying: true }));
-              if (!window.__QUETTA_INITIAL_RESUMED__ && ${ctxTime} > 2) {
-                try {
-                  if (typeof capturedVideo.fastSeek === 'function') {
-                    capturedVideo.fastSeek(${ctxTime});
-                  } else {
-                    capturedVideo.currentTime = ${ctxTime};
-                  }
-                } catch(e) {}
-                triggerMegaSeek(${ctxTime});
-              }
-            }).catch(function(){});
-          } else if (action === 'PAUSE') {
-            userWantsPaused = true;
-            capturedVideo.pause();
-            isolateVideo(capturedVideo);
-            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'playstate', isPlaying: false }));
-          } else if (action === 'TOGGLE') {
-            if (capturedVideo.paused) {
-              userWantsPaused = false;
-              capturedVideo.play().then(function() {
-                isolateVideo(capturedVideo);
-                window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'playstate', isPlaying: true }));
-                if (!window.__QUETTA_INITIAL_RESUMED__ && ${ctxTime} > 2) {
-                  try {
-                    if (typeof capturedVideo.fastSeek === 'function') {
-                      capturedVideo.fastSeek(${ctxTime});
-                    } else {
-                      capturedVideo.currentTime = ${ctxTime};
-                    }
-                  } catch(e) {}
-                  triggerMegaSeek(${ctxTime});
-                }
-              }).catch(function(){});
-            } else {
-              userWantsPaused = true;
-              capturedVideo.pause();
-              isolateVideo(capturedVideo);
-              window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'playstate', isPlaying: false }));
-            }
-          } else if (action === 'SEEK' && typeof val === 'number') {
-            window.__QUETTA_INITIAL_RESUMED__ = true;
-            if (window.__QUETTA_RESUME_TIMER__) {
-              clearInterval(window.__QUETTA_RESUME_TIMER__);
-              window.__QUETTA_RESUME_TIMER__ = null;
-            }
+        if (action === 'PLAY') {
+          doPlay();
+          return;
+        } else if (action === 'PAUSE') {
+          doPause();
+          return;
+        } else if (action === 'TOGGLE') {
+          if (userWantsPaused || (capturedVideo && capturedVideo.paused)) {
+            doPlay();
+          } else {
+            doPause();
+          }
+          return;
+        } else if (action === 'SEEK' && typeof val === 'number') {
+          window.__QUETTA_INITIAL_RESUMED__ = true;
+          if (window.__QUETTA_RESUME_TIMER__) {
+            clearInterval(window.__QUETTA_RESUME_TIMER__);
+            window.__QUETTA_RESUME_TIMER__ = null;
+          }
 
-            // 1. Native HTML5 video currentTime (always applied for MSE videostream and standard HTML5)
+          // 1. Native HTML5 video currentTime (always applied for MSE videostream and standard HTML5)
+          if (capturedVideo) {
             try {
               if (typeof capturedVideo.fastSeek === 'function') {
                 capturedVideo.fastSeek(val);
@@ -721,165 +862,93 @@ export function buildQuettaInjectedScript(options: QuettaScriptOptions = {}): st
                 capturedVideo.currentTime = val;
               }
             } catch(e) {}
-
-            // 2. JWPlayer seek API (Vidhide / Earnvids native engine)
-            try {
-              if (window.jwplayer && typeof window.jwplayer === 'function') {
-                var jw = window.jwplayer();
-                if (!jw || typeof jw.seek !== 'function') {
-                  jw = (typeof window.jwplayer === 'function' && window.jwplayer(0)) || 
-                       (typeof window.jwplayer === 'function' && window.jwplayer('vplayer')) || 
-                       (typeof window.jwplayer === 'function' && window.jwplayer('player'));
-                }
-                if (jw && typeof jw.seek === 'function') {
-                  jw.seek(val);
-                }
-              }
-            } catch(e) {}
-
-            // 3. Video.js seek API
-            try {
-              if (window.videojs && typeof window.videojs.getAllPlayers === 'function') {
-                var allP = window.videojs.getAllPlayers();
-                if (allP && allP[0] && typeof allP[0].currentTime === 'function') {
-                  allP[0].currentTime(val);
-                }
-              }
-            } catch(e) {}
-
-            // 4. PlayerJS API
-            try {
-              if (window.playerjs && typeof window.playerjs.api === 'function') {
-                window.playerjs.api('seek', val);
-              }
-            } catch(e) {}
-
-            // 5. Timeline simulated click for Mega MKV
-            triggerMegaSeek(val);
             isolateVideo(capturedVideo);
-          } else if (action === 'SPEED' && typeof val === 'number') {
-            try {
-              window.__QUETTA_SPEED__ = val;
-              if (capturedVideo) {
-                capturedVideo.playbackRate = val;
+          }
+
+          // 2. JWPlayer seek API (Vidhide / Earnvids native engine)
+          try {
+            if (window.jwplayer && typeof window.jwplayer === 'function') {
+              var jw = window.jwplayer();
+              if (!jw || typeof jw.seek !== 'function') {
+                jw = (typeof window.jwplayer === 'function' && window.jwplayer(0)) || 
+                     (typeof window.jwplayer === 'function' && window.jwplayer('vplayer')) || 
+                     (typeof window.jwplayer === 'function' && window.jwplayer('player'));
               }
-              var vids = document.getElementsByTagName('video');
-              for (var i = 0; i < vids.length; i++) {
-                vids[i].playbackRate = val;
+              if (jw && typeof jw.seek === 'function') {
+                jw.seek(val);
               }
-              if (window.jwplayer && typeof window.jwplayer === 'function') {
-                var jw = window.jwplayer();
-                if (!jw || typeof jw.setPlaybackRate !== 'function') {
-                  jw = (typeof window.jwplayer === 'function' && window.jwplayer(0)) || 
-                       (typeof window.jwplayer === 'function' && window.jwplayer('vplayer')) || 
-                       (typeof window.jwplayer === 'function' && window.jwplayer('player'));
+            }
+          } catch(e) {}
+
+          // 3. Video.js seek API
+          try {
+            if (window.videojs && typeof window.videojs.getAllPlayers === 'function') {
+              var allP = window.videojs.getAllPlayers();
+              for (var si = 0; si < allP.length; si++) {
+                if (allP[si] && typeof allP[si].currentTime === 'function') {
+                  allP[si].currentTime(val);
                 }
-                if (jw && typeof jw.setPlaybackRate === 'function') jw.setPlaybackRate(val);
               }
-              if (window.videojs && typeof window.videojs.getAllPlayers === 'function') {
-                var allP = window.videojs.getAllPlayers();
-                if (allP && allP[0] && typeof allP[0].playbackRate === 'function') allP[0].playbackRate(val);
-              }
-            } catch(e) {}
-          } else if (action === 'ASPECT_RATIO' && typeof val === 'string') {
-            try {
-              window.__QUETTA_ASPECT_RATIO__ = val;
-              var styleEl = document.getElementById('__quetta_aspect_style__');
-              if (!styleEl) {
-                styleEl = document.createElement('style');
-                styleEl.id = '__quetta_aspect_style__';
-                (document.head || document.documentElement).appendChild(styleEl);
-              }
-              styleEl.innerHTML = 'video { object-fit: ' + val + ' !important; }';
-              if (capturedVideo) {
-                capturedVideo.style.setProperty('object-fit', val, 'important');
-              }
-            } catch(e) {}
-          }
+            }
+          } catch(e) {}
+
+          // 4. PlayerJS API
+          try {
+            if (window.playerjs && typeof window.playerjs.api === 'function') {
+              window.playerjs.api('seek', val);
+            }
+            if (window.pljssglobal && Array.isArray(window.pljssglobal)) {
+              window.pljssglobal.forEach(function(p) {
+                if (p && typeof p.api === 'function') try { p.api('seek', val); } catch(e) {}
+              });
+            }
+          } catch(e) {}
+
+          // 5. Timeline simulated click for Mega MKV
+          triggerMegaSeek(val);
           return;
-        }
-
-        // Fallback ONLY when video element has not been created yet
-        try {
-          if (action === 'SPEED' && typeof val === 'number') {
+        } else if (action === 'SPEED' && typeof val === 'number') {
+          try {
             window.__QUETTA_SPEED__ = val;
-          }
-          if (action === 'ASPECT_RATIO' && typeof val === 'string') {
+            if (capturedVideo) {
+              capturedVideo.playbackRate = val;
+            }
+            var allVids = document.getElementsByTagName('video');
+            for (var vi = 0; vi < allVids.length; vi++) {
+              allVids[vi].playbackRate = val;
+            }
+            if (window.jwplayer && typeof window.jwplayer === 'function') {
+              var jwSpeed = window.jwplayer();
+              if (!jwSpeed || typeof jwSpeed.setPlaybackRate !== 'function') {
+                jwSpeed = (typeof window.jwplayer === 'function' && window.jwplayer(0)) || 
+                          (typeof window.jwplayer === 'function' && window.jwplayer('vplayer')) || 
+                          (typeof window.jwplayer === 'function' && window.jwplayer('player'));
+              }
+              if (jwSpeed && typeof jwSpeed.setPlaybackRate === 'function') jwSpeed.setPlaybackRate(val);
+            }
+            if (window.videojs && typeof window.videojs.getAllPlayers === 'function') {
+              var allVjs = window.videojs.getAllPlayers();
+              for (var vj = 0; vj < allVjs.length; vj++) {
+                if (allVjs[vj] && typeof allVjs[vj].playbackRate === 'function') allVjs[vj].playbackRate(val);
+              }
+            }
+          } catch(e) {}
+          return;
+        } else if (action === 'ASPECT_RATIO' && typeof val === 'string') {
+          try {
             window.__QUETTA_ASPECT_RATIO__ = val;
-            try {
-              var sEl = document.getElementById('__quetta_aspect_style__');
-              if (!sEl) {
-                sEl = document.createElement('style');
-                sEl.id = '__quetta_aspect_style__';
-                (document.head || document.documentElement).appendChild(sEl);
-              }
-              sEl.innerHTML = 'video { object-fit: ' + val + ' !important; }';
-            } catch(e) {}
-          }
-          if (window.jwplayer && typeof window.jwplayer === 'function') {
-            var jw = window.jwplayer();
-            if (action === 'PLAY' || action === 'TOGGLE') try { jw.play(); } catch(e) {}
-            if (action === 'PAUSE') try { jw.pause(); } catch(e) {}
-            if (action === 'SEEK' && typeof val === 'number') try { jw.seek(val); } catch(e) {}
-            if (action === 'SPEED' && typeof val === 'number') try { jw.setPlaybackRate(val); } catch(e) {}
-          }
-          if (window.videojs && typeof window.videojs.getAllPlayers === 'function') {
-            var allP = window.videojs.getAllPlayers();
-            if (allP && allP[0]) {
-              if (action === 'PLAY' || action === 'TOGGLE') try { allP[0].play(); } catch(e) {}
-              if (action === 'PAUSE') try { allP[0].pause(); } catch(e) {}
-              if (action === 'SEEK' && typeof val === 'number') try { allP[0].currentTime(val); } catch(e) {}
+            var styleEl = document.getElementById('__quetta_aspect_style__');
+            if (!styleEl) {
+              styleEl = document.createElement('style');
+              styleEl.id = '__quetta_aspect_style__';
+              (document.head || document.documentElement).appendChild(styleEl);
             }
-          }
-          if (window.playerjs && typeof window.playerjs.api === 'function') {
-            if (action === 'PLAY' || action === 'TOGGLE') window.playerjs.api('play');
-            if (action === 'PAUSE') window.playerjs.api('pause');
-            if (action === 'SEEK' && typeof val === 'number') window.playerjs.api('seek', val);
-          }
-          if (window.pljssglobal && Array.isArray(window.pljssglobal)) {
-            window.pljssglobal.forEach(function(p) {
-              if (p && typeof p.api === 'function') {
-                if (action === 'PLAY' || action === 'TOGGLE') try { p.api('play'); } catch(e) {}
-                if (action === 'PAUSE') try { p.api('pause'); } catch(e) {}
-                if (action === 'SEEK' && typeof val === 'number') try { p.api('seek', val); } catch(e) {}
-              }
-            });
-          }
-        } catch(e) {}
-
-        if (action === 'PLAY' || action === 'TOGGLE') {
-          triggerMegaPlay();
-          var clickSelectors = [
-            'div.play-video-button',
-            '#playerjs',
-            '#playerjs_start',
-            '[id^="pjs_"]',
-            '.vjs-big-play-button',
-            '.jw-icon-display',
-            '.jw-display-icon-container',
-            '#play-button',
-            '.play-button',
-            '.play-btn',
-            '.viewer-play-button',
-
-          '.video-play-btn',
-          '.video-play-button',
-          'button.play-button',
-          'button[class*="play"]',
-          '[data-symbol="play"]',
-  
-
-
-
-
-          ];
-          for (var i = 0; i < clickSelectors.length; i++) {
-            var el = document.querySelector(clickSelectors[i]);
-            if (el) {
-              triggerClick(el);
-              break;
+            styleEl.innerHTML = 'video { object-fit: ' + val + ' !important; }';
+            if (capturedVideo) {
+              capturedVideo.style.setProperty('object-fit', val, 'important');
             }
-          }
+          } catch(e) {}
+          return;
         }
       };
 
@@ -959,7 +1028,6 @@ export function buildQuettaInjectedScript(options: QuettaScriptOptions = {}): st
           '.play-btn',
           '.player-poster',
           '.viewer-play-button',
-
           '.video-play-btn',
           '.video-play-button',
           'button.play-button',

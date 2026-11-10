@@ -59,6 +59,16 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
             var streamUrl = ${JSON.stringify(actualHlsUrl)};
             var initTime = ${initTime > 0 ? initTime : 0};
             var hlsInstance = null;
+            var userWantsPaused = false;
+
+            // Intercept rogue .play() calls when user paused
+            var origPlay = video.play;
+            video.play = function() {
+                if (userWantsPaused) {
+                    return Promise.reject(new Error('User paused playback'));
+                }
+                return origPlay.apply(this, arguments);
+            };
 
             function postMsg(data) {
                 try {
@@ -72,14 +82,26 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
             window.__QUETTA_EXEC__ = function(action, val) {
                 try {
                     if (action === 'PLAY') {
+                        userWantsPaused = false;
                         video.play().catch(function() {});
                     } else if (action === 'PAUSE') {
+                        userWantsPaused = true;
                         video.pause();
+                        postMsg({
+                            type: 'playstate',
+                            isPlaying: false
+                        });
                     } else if (action === 'TOGGLE') {
-                        if (video.paused) {
+                        if (userWantsPaused || video.paused) {
+                            userWantsPaused = false;
                             video.play().catch(function() {});
                         } else {
+                            userWantsPaused = true;
                             video.pause();
+                            postMsg({
+                                type: 'playstate',
+                                isPlaying: false
+                            });
                         }
                     } else if (action === 'SEEK') {
                         if (typeof val === 'number') {
@@ -117,6 +139,10 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
             });
 
             video.addEventListener('playing', function() {
+                if (userWantsPaused) {
+                    try { video.pause(); } catch(e) {}
+                    return;
+                }
                 postMsg({
                     type: 'playstate',
                     isPlaying: true
@@ -217,10 +243,12 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
                         if (initTime > 0) {
                             try { video.currentTime = initTime; } catch(e) {}
                         }
-                        video.play().catch(function() {
-                            video.muted = true;
-                            video.play().catch(function() {});
-                        });
+                        if (!userWantsPaused) {
+                            video.play().catch(function() {
+                                video.muted = true;
+                                video.play().catch(function() {});
+                            });
+                        }
                     });
 
                     hls.on(Hls.Events.LEVEL_LOADED, function(event, data) {
@@ -257,10 +285,12 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
                     if (initTime > 0) {
                         try { video.currentTime = initTime; } catch(e) {}
                     }
-                    video.play().catch(function() {
-                        video.muted = true;
-                        video.play().catch(function() {});
-                    });
+                    if (!userWantsPaused) {
+                        video.play().catch(function() {
+                            video.muted = true;
+                            video.play().catch(function() {});
+                        });
+                    }
                 }
             }
 

@@ -9,12 +9,16 @@ import {
   ActivityIndicator,
   ScrollView,
   BackHandler,
+  DeviceEventEmitter,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Colors } from '../../constants/Colors';
 import {
   fetchAnimeWatch,
   fetchDonghuaWatch,
+  fetchAnimeDetail,
+  fetchDonghuaDetail,
+  getCachedAnimeDetail,
   fetchKuramanimeLazyStream,
   WatchResponse,
   ServerItem,
@@ -76,10 +80,17 @@ interface TVNativePlayerProps {
   animeThumb: string;
   episodeSlug: string;
   episodeTitle: string;
+  episodes?: { title: string; slug: string }[];
   source: 'anime' | 'donghua' | 'otakudesu' | 'anichin';
   onClose: () => void;
   onEpisodeChange?: (newEpisodeSlug: string, newEpisodeTitle: string) => void;
 }
+
+export const formatTime = (secs: number) => {
+  const m = Math.floor(secs / 60);
+  const s = Math.floor(secs % 60);
+  return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+};
 
 export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
   animeSlug,
@@ -87,6 +98,7 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
   animeThumb,
   episodeSlug,
   episodeTitle,
+  episodes: initialEpisodes,
   source,
   onClose,
   onEpisodeChange,
@@ -100,22 +112,65 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(1440); // 24 minutes default
   const [bufferedTime, setBufferedTime] = useState(0);
-  const [showControls, setShowControls] = useState(true);
+  const [isOsdVisible, setIsOsdVisible] = useState(false);
   const [centerToast, setCenterToast] = useState<{
     type: 'play' | 'pause' | 'rewind' | 'forward' | 'info';
     label: string;
   } | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<'episodes' | 'servers'>('episodes');
-  const [focusedBtn, setFocusedBtn] = useState<string | null>('bottom-episodes');
+  const [drawerIndex, setDrawerIndex] = useState<number>(0);
+  const [activeTier, setActiveTier] = useState<1 | 2 | 3 | 4>(1);
+  const [tier3Selection, setTier3Selection] = useState<'episodes' | 'servers' | 'speed'>('episodes');
+  const [scrubTime, setScrubTime] = useState<number>(0);
+  const [scrubStep, setScrubStep] = useState<number>(10);
+  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1.0);
 
   // --- Refs ---
   const webViewRef = useRef<WebView | null>(null);
-  const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const drawerScrollViewRef = useRef<ScrollView | null>(null);
+  const osdTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const centerToastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const controlsOpacity = useRef(new Animated.Value(1)).current;
   const drawerSlideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const playerActiveRef = useRef<boolean>(true);
+
+  // SmartTube Accelerated Scrubbing Tracking Refs
+  const lastScrubTimeRef = useRef<number>(0);
+  const scrubStreakRef = useRef<number>(0);
+
+  // Synchronized refs to eliminate any stale closures in hardware remote listener
+  const isOsdVisibleRef = useRef<boolean>(false);
+  isOsdVisibleRef.current = isOsdVisible;
+
+  const activeTierRef = useRef<1 | 2 | 3 | 4>(1);
+  activeTierRef.current = activeTier;
+
+  const tier3SelectionRef = useRef<'episodes' | 'servers' | 'speed'>('episodes');
+  tier3SelectionRef.current = tier3Selection;
+
+  const scrubTimeRef = useRef<number>(0);
+  scrubTimeRef.current = scrubTime;
+
+  const playbackSpeedRef = useRef<number>(1.0);
+  playbackSpeedRef.current = playbackSpeed;
+
+  const currentTimeRef = useRef<number>(0);
+  currentTimeRef.current = currentTime;
+
+  const durationRef = useRef<number>(1440);
+  durationRef.current = duration;
+
+  const drawerIndexRef = useRef<number>(0);
+  drawerIndexRef.current = drawerIndex;
+
+  const drawerTabRef = useRef<'episodes' | 'servers'>('episodes');
+  drawerTabRef.current = drawerTab;
+
+  const watchDataRef = useRef<WatchResponse | null>(null);
+  watchDataRef.current = watchData;
+
+  const currentServerRef = useRef<ServerItem | null>(null);
+  currentServerRef.current = currentServer;
 
   // Normalize source name
   const normSource: 'otakudesu' | 'anichin' =
@@ -135,6 +190,27 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
         }
 
         if (!isMounted) return;
+
+        // Populate episodes: from props, from watchData, or fallback detail
+        if (initialEpisodes && initialEpisodes.length > 0) {
+          data.episodes = initialEpisodes;
+        } else if (!data.episodes || data.episodes.length === 0) {
+          try {
+            if (normSource === 'anichin') {
+              const d = await fetchDonghuaDetail(animeSlug);
+              if (d?.episodes && d.episodes.length > 0) {
+                data.episodes = d.episodes;
+              }
+            } else {
+              const d = getCachedAnimeDetail(animeSlug) || await fetchAnimeDetail(animeSlug);
+              if (d?.episodes && d.episodes.length > 0) {
+                data.episodes = d.episodes;
+              }
+            }
+          } catch (e) {
+            console.warn('Fallback episodes error in TV player:', e);
+          }
+        }
 
         // Filter and sort servers matching kuzen_app priority
         const rawServers = data.servers || [];
@@ -213,40 +289,32 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [episodeSlug, normSource]);
+  }, [episodeSlug, normSource, animeSlug, initialEpisodes]);
 
-  // --- 2. Auto-Hide Controls Timer (Controls remain mounted, only opacity fades) ---
-  const resetControlsTimer = useCallback(() => {
-    setShowControls(true);
-    Animated.timing(controlsOpacity, {
-      toValue: 1,
-      duration: 150,
-      useNativeDriver: true,
-    }).start();
-
-    if (controlsTimeoutRef.current) {
-      clearTimeout(controlsTimeoutRef.current);
+  // --- 2. SmartTube Auto-Close Timer for OSD Menu (8 seconds inactivity) ---
+  const resetOsdTimer = useCallback(() => {
+    if (osdTimeoutRef.current) {
+      clearTimeout(osdTimeoutRef.current);
     }
-
-    if (!isDrawerOpen) {
-      controlsTimeoutRef.current = setTimeout(() => {
-        Animated.timing(controlsOpacity, {
-          toValue: 0,
-          duration: 350,
-          useNativeDriver: true,
-        }).start(() => {
-          setShowControls(false);
-        });
-      }, AUTO_HIDE_DELAY);
+    // Only auto-close if OSD is visible and drawer is not open
+    if (isOsdVisibleRef.current && !isDrawerOpen) {
+      osdTimeoutRef.current = setTimeout(() => {
+        setIsOsdVisible(false);
+        isOsdVisibleRef.current = false;
+        setActiveTier(1);
+        activeTierRef.current = 1;
+      }, 8000);
     }
-  }, [isDrawerOpen, controlsOpacity]);
+  }, [isDrawerOpen]);
 
   useEffect(() => {
-    resetControlsTimer();
+    if (isOsdVisible) {
+      resetOsdTimer();
+    }
     return () => {
-      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+      if (osdTimeoutRef.current) clearTimeout(osdTimeoutRef.current);
     };
-  }, [resetControlsTimer]);
+  }, [isOsdVisible, resetOsdTimer]);
 
   // --- 3. Telemetry & Supabase History Polling ---
   useEffect(() => {
@@ -308,38 +376,87 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
     []
   );
 
+  // SmartTube Accelerated Scrubbing: dynamically scales step based on rapid clicks
+  const getScrubStep = useCallback(() => {
+    const now = Date.now();
+    if (now - lastScrubTimeRef.current < 550) {
+      scrubStreakRef.current += 1;
+    } else {
+      scrubStreakRef.current = 1;
+    }
+    lastScrubTimeRef.current = now;
+
+    let step = 10;
+    if (scrubStreakRef.current >= 8) {
+      step = 60; // 1 minute
+    } else if (scrubStreakRef.current >= 4) {
+      step = 30; // 30 seconds
+    }
+    setScrubStep(step);
+    return step;
+  }, []);
+
+  const cyclePlaybackSpeed = useCallback(() => {
+    const SPEED_OPTIONS = [1.0, 1.25, 1.5, 2.0];
+    const nextIdx = (SPEED_OPTIONS.indexOf(playbackSpeedRef.current) + 1) % SPEED_OPTIONS.length;
+    const nextSpeed = SPEED_OPTIONS[nextIdx];
+    setPlaybackSpeed(nextSpeed);
+    playbackSpeedRef.current = nextSpeed;
+    sendQuettaCommand('SPEED', nextSpeed);
+    showCenterToast('info', `Kecepatan: ${nextSpeed}x`, 1000);
+  }, [showCenterToast]);
+
   const togglePlayPause = useCallback(() => {
-    resetControlsTimer();
     sendQuettaCommand('TOGGLE');
     setIsPlaying((prev) => {
       const next = !prev;
       showCenterToast(next ? 'play' : 'pause', next ? 'Putar' : 'Jeda');
       return next;
     });
-  }, [resetControlsTimer, showCenterToast]);
+  }, [showCenterToast]);
 
   const handleSeek = useCallback(
     (delta: number) => {
-      resetControlsTimer();
       const nextTime = Math.max(0, Math.min(duration, currentTime + delta));
       setCurrentTime(nextTime);
       sendQuettaCommand('SEEK', nextTime);
       showCenterToast(delta > 0 ? 'forward' : 'rewind', delta > 0 ? '+10s' : '-10s');
     },
-    [duration, currentTime, resetControlsTimer, showCenterToast]
+    [duration, currentTime, showCenterToast]
   );
 
   const openDrawer = useCallback((tab: 'episodes' | 'servers' = 'episodes') => {
     setDrawerTab(tab);
+    drawerTabRef.current = tab;
+
+    let initIdx = 0;
+    if (tab === 'episodes') {
+      const epList = watchDataRef.current?.episodes || [];
+      const found = epList.findIndex((e) => e.slug === episodeSlug);
+      initIdx = found >= 0 ? found : 0;
+    } else {
+      const srvList = watchDataRef.current?.servers || [];
+      const found = srvList.findIndex((s) => s.label === currentServerRef.current?.label);
+      initIdx = found >= 0 ? found : 0;
+    }
+    setDrawerIndex(initIdx);
+    drawerIndexRef.current = initIdx;
+
     setIsDrawerOpen(true);
-    setShowControls(true);
     drawerSlideAnim.setValue(SCREEN_HEIGHT);
     Animated.spring(drawerSlideAnim, {
       toValue: 0,
       useNativeDriver: true,
       friction: 8,
-    }).start();
-  }, [drawerSlideAnim, setShowControls]);
+    }).start(() => {
+      setTimeout(() => {
+        drawerScrollViewRef.current?.scrollTo({
+          x: Math.max(0, initIdx * (tab === 'episodes' ? 144 : 164) - 100),
+          animated: true,
+        });
+      }, 60);
+    });
+  }, [episodeSlug, drawerSlideAnim]);
 
   const closeDrawer = useCallback(() => {
     Animated.timing(drawerSlideAnim, {
@@ -348,25 +465,24 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
       useNativeDriver: true,
     }).start(() => {
       setIsDrawerOpen(false);
-      resetControlsTimer();
-      setFocusedBtn('bottom-episodes');
+      resetOsdTimer();
     });
-  }, [drawerSlideAnim, resetControlsTimer]);
+  }, [drawerSlideAnim, resetOsdTimer]);
 
   // Handle hardware Back button on TV remote
   useEffect(() => {
     const onBackPress = () => {
-      if (isDrawerOpen) {
+      if (activeTierRef.current === 4) {
         closeDrawer();
+        setActiveTier(3);
+        activeTierRef.current = 3;
         return true;
       }
-      if (showControls) {
-        // Quick hide controls on first back press
-        Animated.timing(controlsOpacity, {
-          toValue: 0,
-          duration: 200,
-          useNativeDriver: true,
-        }).start(() => setShowControls(false));
+      if (isOsdVisibleRef.current) {
+        setIsOsdVisible(false);
+        isOsdVisibleRef.current = false;
+        setActiveTier(1);
+        activeTierRef.current = 1;
         return true;
       }
       onClose();
@@ -374,7 +490,222 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
     };
     const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => subscription.remove();
-  }, [isDrawerOpen, showControls, onClose]);
+  }, [closeDrawer, onClose]);
+
+  // --- 4-Tier Android TV Hardware Remote Key Dispatcher ---
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('onTVRemoteKey', (keyCode: number) => {
+      // 1. Back Key (keyCode 4: BACK, keyCode 111: ESCAPE on PC/Emulator Keyboard)
+      if (keyCode === 4 || keyCode === 111) {
+        if (activeTierRef.current === 4) {
+          closeDrawer();
+          setActiveTier(3);
+          activeTierRef.current = 3;
+          return;
+        }
+        if (isOsdVisibleRef.current) {
+          setIsOsdVisible(false);
+          isOsdVisibleRef.current = false;
+          setActiveTier(1);
+          activeTierRef.current = 1;
+          return;
+        }
+        onClose();
+        return;
+      }
+
+      // 2. Tingkat 4: Drawer is Open (Episode or Server Selector)
+      if (activeTierRef.current === 4) {
+        if (keyCode === 19) { // DPAD_UP -> Return to Tingkat 3
+          closeDrawer();
+          setActiveTier(3);
+          activeTierRef.current = 3;
+          return;
+        }
+
+        const isEps = drawerTabRef.current === 'episodes';
+        const items = isEps
+          ? watchDataRef.current?.episodes || []
+          : watchDataRef.current?.servers || [];
+        if (items.length === 0) return;
+
+        const cardWidth = isEps ? 144 : 164;
+
+        if (keyCode === 21) { // DPAD_LEFT
+          const next = Math.max(0, drawerIndexRef.current - 1);
+          setDrawerIndex(next);
+          drawerIndexRef.current = next;
+          drawerScrollViewRef.current?.scrollTo({
+            x: Math.max(0, next * cardWidth - 100),
+            animated: true,
+          });
+          return;
+        }
+        if (keyCode === 22) { // DPAD_RIGHT
+          const next = Math.min(items.length - 1, drawerIndexRef.current + 1);
+          setDrawerIndex(next);
+          drawerIndexRef.current = next;
+          drawerScrollViewRef.current?.scrollTo({
+            x: Math.max(0, next * cardWidth - 100),
+            animated: true,
+          });
+          return;
+        }
+        if (keyCode === 23 || keyCode === 66 || keyCode === 160 || keyCode === 62) { // DPAD_CENTER / ENTER / SPACE -> Select Item
+          const currentIdx = drawerIndexRef.current;
+          if (isEps) {
+            const epList = watchDataRef.current?.episodes || [];
+            const ep = epList[currentIdx];
+            if (ep) {
+              closeDrawer();
+              setIsOsdVisible(false);
+              isOsdVisibleRef.current = false;
+              setActiveTier(1);
+              activeTierRef.current = 1;
+              onEpisodeChange?.(ep.slug, extractEpisodeNumber(ep.title, currentIdx));
+            }
+          } else {
+            const srvList = watchDataRef.current?.servers || [];
+            const s = srvList[currentIdx];
+            if (s) {
+              setCurrentServer(s);
+              closeDrawer();
+              setIsOsdVisible(false);
+              isOsdVisibleRef.current = false;
+              setActiveTier(1);
+              activeTierRef.current = 1;
+              showCenterToast('info', `Ganti ke ${s.label}`, 1500);
+            }
+          }
+          return;
+        }
+        return;
+      }
+
+      // 3. Mode Watch (Tingkat 1): OSD Sedang Tertutup
+      if (!isOsdVisibleRef.current) {
+        if (
+          keyCode === 23 || // DPAD_CENTER
+          keyCode === 66 || // ENTER
+          keyCode === 160 || // NUMPAD_ENTER
+          keyCode === 62 || // SPACEBAR (Emulator / PC Keyboard)
+          keyCode === 85 || // MEDIA_PLAY_PAUSE
+          keyCode === 126 || // MEDIA_PLAY
+          keyCode === 127 // MEDIA_PAUSE
+        ) {
+          togglePlayPause();
+        } else if (keyCode === 21 || keyCode === 89) { // LEFT -> Skip -10s
+          handleSeek(-10);
+        } else if (keyCode === 22 || keyCode === 90) { // RIGHT -> Skip +10s
+          handleSeek(10);
+        } else if (keyCode === 20 || keyCode === 19) { // DOWN or UP -> BUKA OSD PLAYER (SmartTube Style)
+          setIsOsdVisible(true);
+          isOsdVisibleRef.current = true;
+          setActiveTier(2);
+          activeTierRef.current = 2;
+          setScrubTime(currentTimeRef.current);
+          resetOsdTimer();
+        }
+        return;
+      }
+
+      // 4. Tingkat 2 (Seekbar): OSD Terbuka
+      if (activeTierRef.current === 2) {
+        resetOsdTimer();
+        if (keyCode === 21 || keyCode === 89) { // LEFT -> Scrub backward (SmartTube Accelerated)
+          const step = getScrubStep();
+          setScrubTime((prev) => {
+            const next = Math.max(0, prev - step);
+            scrubTimeRef.current = next;
+            return next;
+          });
+          showCenterToast('rewind', `-${step}s`, 600);
+        } else if (keyCode === 22 || keyCode === 90) { // RIGHT -> Scrub forward (SmartTube Accelerated)
+          const step = getScrubStep();
+          setScrubTime((prev) => {
+            const next = Math.min(durationRef.current, prev + step);
+            scrubTimeRef.current = next;
+            return next;
+          });
+          showCenterToast('forward', `+${step}s`, 600);
+        } else if (keyCode === 23 || keyCode === 66 || keyCode === 160 || keyCode === 62) { // OK / ENTER / SPACE -> Confirm seek
+          scrubStreakRef.current = 0;
+          setScrubStep(10);
+          const target = scrubTimeRef.current;
+          setCurrentTime(target);
+          sendQuettaCommand('SEEK', target);
+          showCenterToast('info', `Lompat ke ${formatTime(target)}`);
+        } else if (keyCode === 20) { // DOWN -> Move to Tingkat 3 (Episode, Server, Speed buttons)
+          scrubStreakRef.current = 0;
+          setScrubStep(10);
+          setActiveTier(3);
+          activeTierRef.current = 3;
+          setTier3Selection('episodes');
+          tier3SelectionRef.current = 'episodes';
+        } else if (keyCode === 19) { // UP -> Tutup OSD, Kembali ke Watch Fullscreen (SmartTube Style)
+          scrubStreakRef.current = 0;
+          setScrubStep(10);
+          setIsOsdVisible(false);
+          isOsdVisibleRef.current = false;
+          setActiveTier(1);
+          activeTierRef.current = 1;
+        }
+        return;
+      }
+
+      // 5. Tingkat 3 (Barisan Pilih Episode, Server & Kecepatan): OSD Terbuka
+      if (activeTierRef.current === 3) {
+        resetOsdTimer();
+        if (keyCode === 21) { // LEFT
+          if (tier3SelectionRef.current === 'speed') {
+            setTier3Selection('servers');
+            tier3SelectionRef.current = 'servers';
+          } else {
+            setTier3Selection('episodes');
+            tier3SelectionRef.current = 'episodes';
+          }
+        } else if (keyCode === 22) { // RIGHT
+          if (tier3SelectionRef.current === 'episodes') {
+            setTier3Selection('servers');
+            tier3SelectionRef.current = 'servers';
+          } else {
+            setTier3Selection('speed');
+            tier3SelectionRef.current = 'speed';
+          }
+        } else if (keyCode === 19) { // UP -> Return to Tingkat 2 (Seekbar)
+          setActiveTier(2);
+          activeTierRef.current = 2;
+          setScrubTime(currentTimeRef.current);
+        } else if (keyCode === 23 || keyCode === 66 || keyCode === 160 || keyCode === 62) { // OK / ENTER / SPACE
+          if (tier3SelectionRef.current === 'speed') {
+            cyclePlaybackSpeed();
+          } else if (tier3SelectionRef.current === 'servers') {
+            openDrawer('servers');
+            setActiveTier(4);
+            activeTierRef.current = 4;
+          } else {
+            openDrawer('episodes');
+            setActiveTier(4);
+            activeTierRef.current = 4;
+          }
+        }
+        return;
+      }
+    });
+
+    return () => sub.remove();
+  }, [
+    getScrubStep,
+    cyclePlaybackSpeed,
+    togglePlayPause,
+    handleSeek,
+    openDrawer,
+    closeDrawer,
+    resetOsdTimer,
+    showCenterToast,
+    onEpisodeChange,
+    onClose,
+  ]);
 
   // Handle telemetry incoming from Quetta Media Hijacking script inside WebView
   const handleWebViewMessage = (event: any) => {
@@ -403,14 +734,8 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
     } catch (_) {}
   };
 
-  // Format mm:ss
-  const formatTime = (secs: number) => {
-    const m = Math.floor(secs / 60);
-    const s = Math.floor(secs % 60);
-    return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
-  };
-
-  const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const displayTime = activeTier === 2 ? scrubTime : currentTime;
+  const displayProgress = duration > 0 ? (displayTime / duration) * 100 : 0;
   const bufferPercent = duration > 0 ? (bufferedTime / duration) * 100 : 0;
 
   // Build WebView source & injection with Referer Header & Mobile User-Agent matching kuzen_app
@@ -522,21 +847,7 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
         )}
       </View>
 
-      {/* 2. Full-Screen TV Playback Remote Zone (Always active, receives 1st OK click & bridges UP/DOWN) */}
-      <Pressable
-        focusable={true}
-        hasTVPreferredFocus={!isDrawerOpen}
-        onFocus={() => {
-          setFocusedBtn('playback-zone');
-        }}
-        onBlur={() => {
-          if (focusedBtn === 'playback-zone') setFocusedBtn(null);
-        }}
-        onPress={togglePlayPause}
-        style={styles.playbackZone}
-      />
-
-      {/* 3. Center Action Toast (Appears only on Play/Pause, Seek, or Resume) */}
+      {/* 2. Center Action Toast (Appears only on Play/Pause, Seek, or Resume) */}
       {centerToast && (
         <View style={styles.centerToastContainer} pointerEvents="none">
           <View style={styles.centerToastPill}>
@@ -557,210 +868,185 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
         </View>
       )}
 
-      {/* 4. On-Screen Display (OSD) Overlay - Opacity animated, pointerEvents fixed to box-none */}
-      <Animated.View
-        style={[styles.osdOverlay, { opacity: controlsOpacity }]}
-        pointerEvents="box-none"
-      >
-        {/* Top Bar: Back & Title & Quick Nav */}
-        <View style={styles.topBar}>
-          <Pressable
-            focusable={true}
-            onFocus={() => {
-              setFocusedBtn('back');
-              resetControlsTimer();
-            }}
-            onBlur={() => {
-              if (focusedBtn === 'back') setFocusedBtn(null);
-            }}
-            onPress={onClose}
-            style={({ focused }: any) => [
-              styles.backButton,
-              (focused || focusedBtn === 'back') && styles.backButtonFocused,
-            ]}
-          >
-            <ArrowLeft size={22} color="#FFFFFF" />
-          </Pressable>
-
-          <View style={styles.titleWrapper}>
-            <Text style={styles.animeTitle} numberOfLines={1}>
-              {animeTitle}
-            </Text>
-            <Text style={styles.episodeSubtitle} numberOfLines={1}>
-              {extractEpisodeNumber(episodeTitle, 0)} • {currentServer?.label || 'Quetta Player'}
-            </Text>
-          </View>
-
-          <View style={styles.topActionsRow}>
+      {/* 4. On-Screen Display (OSD) Overlay - SmartTube Style (Mounted only when isOsdVisible) */}
+      {isOsdVisible && (
+        <View style={styles.osdOverlay} pointerEvents="box-none">
+          {/* Top Bar: Back & Title */}
+          <View style={styles.topBar}>
             <Pressable
               focusable={true}
-              onFocus={() => {
-                setFocusedBtn('servers-top');
-                resetControlsTimer();
+              onPress={() => {
+                setIsOsdVisible(false);
+                setActiveTier(1);
               }}
-              onBlur={() => {
-                if (focusedBtn === 'servers-top') setFocusedBtn(null);
-              }}
-              onPress={() => openDrawer('servers')}
               style={({ focused }: any) => [
-                styles.topActionButton,
-                (focused || focusedBtn === 'servers-top') && styles.topActionButtonFocused,
+                styles.backButton,
+                focused && styles.backButtonFocused,
               ]}
             >
-              <ServerIcon size={18} color={focusedBtn === 'servers-top' ? '#FFFFFF' : Colors.primary} />
-              <Text style={styles.topActionText}>Server</Text>
+              <ArrowLeft size={22} color="#FFFFFF" />
             </Pressable>
 
-            <Pressable
-              focusable={true}
-              onFocus={() => {
-                setFocusedBtn('episodes-top');
-                resetControlsTimer();
-              }}
-              onBlur={() => {
-                if (focusedBtn === 'episodes-top') setFocusedBtn(null);
-              }}
-              onPress={() => openDrawer('episodes')}
-              style={({ focused }: any) => [
-                styles.topActionButton,
-                (focused || focusedBtn === 'episodes-top') && styles.topActionButtonFocused,
-              ]}
-            >
-              <ListVideo size={18} color="#FFFFFF" />
-              <Text style={styles.topActionText}>Episode</Text>
-            </Pressable>
-          </View>
-        </View>
-
-        {/* Bottom Bar: Seekbar, Time, and TV Remote Quick Action Row */}
-        <View style={styles.bottomBarGradient}>
-          {/* Seekbar */}
-          <View style={styles.seekbarContainer}>
-            <View style={styles.seekbarRail}>
-              <View style={[styles.seekbarBufferTrack, { width: `${bufferPercent}%` }]} />
-              <View style={[styles.seekbarProgressTrack, { width: `${progressPercent}%` }]} />
+            <View style={styles.titleWrapper}>
+              <Text style={styles.animeTitle} numberOfLines={1}>
+                {animeTitle}
+              </Text>
+              <Text style={styles.episodeSubtitle} numberOfLines={1}>
+                {extractEpisodeNumber(episodeTitle, 0)} • {currentServer?.label || 'Quetta Player'}
+              </Text>
             </View>
-            <View
+          </View>
+
+          {/* Bottom Bar: Seekbar, Time, and TV Remote Quick Action Row */}
+          <View style={styles.bottomBarGradient}>
+            {/* Tingkat 2: Interactive TV Seekbar with High-Contrast #FFFFFF Outline */}
+            <Pressable
+              focusable={false}
+              onPress={() => {
+                const target = scrubTime;
+                setCurrentTime(target);
+                sendQuettaCommand('SEEK', target);
+                showCenterToast('info', `Lompat ke ${formatTime(target)}`);
+              }}
               style={[
-                styles.seekbarThumb,
-                { left: `${Math.max(0, Math.min(99, progressPercent))}%` },
+                styles.seekbarContainer,
+                activeTier === 2 && styles.seekbarContainerFocused,
               ]}
-            />
-          </View>
+            >
+              <View style={styles.seekbarRailWrapper}>
+                <View style={[styles.seekbarRail, activeTier === 2 && styles.seekbarRailFocused]}>
+                  <View style={[styles.seekbarBufferTrack, { width: `${bufferPercent}%` }]} />
+                  <View style={[styles.seekbarProgressTrack, { width: `${displayProgress}%` }]} />
+                </View>
+                <View
+                  style={[
+                    styles.seekbarThumb,
+                    { left: `${Math.max(0, Math.min(98, displayProgress))}%` },
+                    activeTier === 2 && styles.seekbarThumbFocused,
+                  ]}
+                />
+              </View>
 
-          {/* Time & Stream Meta Row */}
-          <View style={styles.bottomMetaRow}>
-            <View style={styles.timeWrapper}>
-              <Text style={styles.timeCurrent}>{formatTime(currentTime)}</Text>
-              <Text style={styles.timeDivider}> / </Text>
-              <Text style={styles.timeTotal}>{formatTime(duration)}</Text>
+              {/* Floating Scrub Preview Badge when activeTier === 2 */}
+              {activeTier === 2 && (
+                <View style={styles.seekbarScrubBadge}>
+                  <Text style={styles.seekbarScrubBadgeText}>
+                    ◄/► [±{scrubStep}s] {formatTime(scrubTime)} • OK: Lompat
+                  </Text>
+                </View>
+              )}
+            </Pressable>
+
+            {/* Time & Stream Meta Row */}
+            <View style={styles.bottomMetaRow}>
+              <View style={styles.timeWrapper}>
+                <Text style={styles.timeCurrent}>
+                  {formatTime(activeTier === 2 ? scrubTime : currentTime)}
+                </Text>
+                <Text style={styles.timeDivider}> / </Text>
+                <Text style={styles.timeTotal}>{formatTime(duration)}</Text>
+              </View>
+
+              <View style={styles.streamMetaWrapper}>
+                <View style={styles.qualityPill}>
+                  <Text style={styles.qualityText}>
+                    {currentServer?.isHls ? 'HLS CEPAT 1080P' : 'QUETTA STREAM'}
+                  </Text>
+                </View>
+              </View>
             </View>
 
-            <View style={styles.streamMetaWrapper}>
-              <View style={styles.qualityPill}>
-                <Text style={styles.qualityText}>
-                  {currentServer?.isHls ? 'HLS CEPAT 1080P' : 'QUETTA STREAM'}
+            {/* Tingkat 3: Barisan Pilih Episode, Server & Kecepatan */}
+            <View style={styles.quickNavRow}>
+              <Pressable
+                focusable={false}
+                onPress={() => {
+                  setTier3Selection('episodes');
+                  tier3SelectionRef.current = 'episodes';
+                  openDrawer('episodes');
+                  setActiveTier(4);
+                  activeTierRef.current = 4;
+                }}
+                style={[
+                  styles.quickNavBtn,
+                  activeTier === 3 && tier3Selection === 'episodes' && styles.quickNavBtnFocused,
+                ]}
+              >
+                <ListVideo
+                  size={20}
+                  color={activeTier === 3 && tier3Selection === 'episodes' ? '#FFFFFF' : Colors.primary}
+                />
+                <Text
+                  style={[
+                    styles.quickNavBtnText,
+                    activeTier === 3 && tier3Selection === 'episodes' && styles.quickNavBtnTextFocused,
+                  ]}
+                >
+                  Daftar Episode ({watchData?.episodes?.length || 0})
+                </Text>
+              </Pressable>
+
+              <Pressable
+                focusable={false}
+                onPress={() => {
+                  setTier3Selection('servers');
+                  tier3SelectionRef.current = 'servers';
+                  openDrawer('servers');
+                  setActiveTier(4);
+                  activeTierRef.current = 4;
+                }}
+                style={[
+                  styles.quickNavBtn,
+                  activeTier === 3 && tier3Selection === 'servers' && styles.quickNavBtnFocused,
+                ]}
+              >
+                <ServerIcon
+                  size={20}
+                  color={activeTier === 3 && tier3Selection === 'servers' ? '#FFFFFF' : Colors.primary}
+                />
+                <Text
+                  style={[
+                    styles.quickNavBtnText,
+                    activeTier === 3 && tier3Selection === 'servers' && styles.quickNavBtnTextFocused,
+                  ]}
+                >
+                  Pilihan Server ({watchData?.servers?.length || 0})
+                </Text>
+              </Pressable>
+
+              <Pressable
+                focusable={false}
+                onPress={cyclePlaybackSpeed}
+                style={[
+                  styles.quickNavBtn,
+                  activeTier === 3 && tier3Selection === 'speed' && styles.quickNavBtnFocused,
+                ]}
+              >
+                <Tv
+                  size={18}
+                  color={activeTier === 3 && tier3Selection === 'speed' ? '#FFFFFF' : Colors.primary}
+                />
+                <Text
+                  style={[
+                    styles.quickNavBtnText,
+                    activeTier === 3 && tier3Selection === 'speed' && styles.quickNavBtnTextFocused,
+                  ]}
+                >
+                  ⚡ {playbackSpeed}x
+                </Text>
+              </Pressable>
+
+              <View style={styles.dpadHintContainer}>
+                <Text style={styles.dpadHintText}>
+                  {activeTier === 2
+                    ? '◄/► Geser Waktu • OK: Lompat • ▲ Tutup • ▼ Turun'
+                    : '◄/► Pilih Menu • OK: Buka • ▲ Naik ke Seekbar'}
                 </Text>
               </View>
             </View>
           </View>
-
-          {/* TV Remote Quick Focus Action Bar (Pressing DOWN from Center directly focuses here) */}
-          <View style={styles.quickNavRow}>
-            <Pressable
-              focusable={true}
-              onFocus={() => {
-                setFocusedBtn('bottom-episodes');
-                resetControlsTimer();
-              }}
-              onBlur={() => {
-                if (focusedBtn === 'bottom-episodes') setFocusedBtn(null);
-              }}
-              onPress={() => openDrawer('episodes')}
-              style={({ focused }: any) => [
-                styles.quickNavBtn,
-                (focused || focusedBtn === 'bottom-episodes') && styles.quickNavBtnFocused,
-              ]}
-            >
-              <ListVideo size={18} color={focusedBtn === 'bottom-episodes' ? '#FFFFFF' : Colors.primary} />
-              <Text style={[
-                styles.quickNavBtnText,
-                focusedBtn === 'bottom-episodes' && styles.quickNavBtnTextFocused
-              ]}>
-                Daftar Episode
-              </Text>
-            </Pressable>
-
-            <Pressable
-              focusable={true}
-              onFocus={() => {
-                setFocusedBtn('bottom-servers');
-                resetControlsTimer();
-              }}
-              onBlur={() => {
-                if (focusedBtn === 'bottom-servers') setFocusedBtn(null);
-              }}
-              onPress={() => openDrawer('servers')}
-              style={({ focused }: any) => [
-                styles.quickNavBtn,
-                (focused || focusedBtn === 'bottom-servers') && styles.quickNavBtnFocused,
-              ]}
-            >
-              <ServerIcon size={18} color={focusedBtn === 'bottom-servers' ? '#FFFFFF' : Colors.primary} />
-              <Text style={[
-                styles.quickNavBtnText,
-                focusedBtn === 'bottom-servers' && styles.quickNavBtnTextFocused
-              ]}>
-                Ganti Server
-              </Text>
-            </Pressable>
-
-            <Pressable
-              focusable={true}
-              onFocus={() => {
-                setFocusedBtn('bottom-rewind');
-                resetControlsTimer();
-              }}
-              onBlur={() => {
-                if (focusedBtn === 'bottom-rewind') setFocusedBtn(null);
-              }}
-              onPress={() => handleSeek(-10)}
-              style={({ focused }: any) => [
-                styles.quickNavBtnSmall,
-                (focused || focusedBtn === 'bottom-rewind') && styles.quickNavBtnFocused,
-              ]}
-            >
-              <RotateCcw size={16} color="#FFFFFF" />
-              <Text style={styles.quickNavBtnTextSmall}>-10d</Text>
-            </Pressable>
-
-            <Pressable
-              focusable={true}
-              onFocus={() => {
-                setFocusedBtn('bottom-forward');
-                resetControlsTimer();
-              }}
-              onBlur={() => {
-                if (focusedBtn === 'bottom-forward') setFocusedBtn(null);
-              }}
-              onPress={() => handleSeek(10)}
-              style={({ focused }: any) => [
-                styles.quickNavBtnSmall,
-                (focused || focusedBtn === 'bottom-forward') && styles.quickNavBtnFocused,
-              ]}
-            >
-              <RotateCw size={16} color="#FFFFFF" />
-              <Text style={styles.quickNavBtnTextSmall}>+10d</Text>
-            </Pressable>
-
-            <View style={styles.dpadHintContainer}>
-              <Text style={styles.dpadHintText}>
-                ▼ Bawah: Menu Kontrol • OK: Putar/Jeda • ◄/►: Lewati 10d
-              </Text>
-            </View>
-          </View>
         </View>
-      </Animated.View>
+      )}
 
       {/* 4. Bottom OSD Drawer (Episode & Server Switcher) - ONLY RENDERED WHEN isDrawerOpen */}
       {isDrawerOpen && (
@@ -772,18 +1058,10 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
         >
           <View style={styles.drawerHeader}>
             <View style={styles.drawerTabsRow}>
-              <Pressable
-                focusable={true}
-                onFocus={() => {
-                  setFocusedBtn('drawer-tab-episodes');
-                  setDrawerTab('episodes');
-                }}
-                onBlur={() => setFocusedBtn(null)}
-                onPress={() => setDrawerTab('episodes')}
+              <View
                 style={[
                   styles.drawerTabButton,
                   drawerTab === 'episodes' && styles.drawerTabButtonActive,
-                  focusedBtn === 'drawer-tab-episodes' && styles.drawerTabButtonFocused,
                 ]}
               >
                 <ListVideo size={18} color={drawerTab === 'episodes' ? Colors.primary : Colors.textMuted} />
@@ -795,20 +1073,12 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
                 >
                   Daftar Episode ({watchData?.episodes?.length || 0})
                 </Text>
-              </Pressable>
+              </View>
 
-              <Pressable
-                focusable={true}
-                onFocus={() => {
-                  setFocusedBtn('drawer-tab-servers');
-                  setDrawerTab('servers');
-                }}
-                onBlur={() => setFocusedBtn(null)}
-                onPress={() => setDrawerTab('servers')}
+              <View
                 style={[
                   styles.drawerTabButton,
                   drawerTab === 'servers' && styles.drawerTabButtonActive,
-                  focusedBtn === 'drawer-tab-servers' && styles.drawerTabButtonFocused,
                 ]}
               >
                 <ServerIcon size={18} color={drawerTab === 'servers' ? Colors.primary : Colors.textMuted} />
@@ -820,18 +1090,13 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
                 >
                   Pilihan Server ({watchData?.servers?.length || 0})
                 </Text>
-              </Pressable>
+              </View>
             </View>
 
             <Pressable
-              focusable={true}
-              onFocus={() => setFocusedBtn('drawer-tab-close')}
-              onBlur={() => setFocusedBtn(null)}
+              focusable={false}
               onPress={closeDrawer}
-              style={[
-                styles.closeDrawerButton,
-                focusedBtn === 'drawer-tab-close' && styles.closeDrawerButtonFocused,
-              ]}
+              style={styles.closeDrawerButton}
             >
               <ChevronDown size={22} color="#FFFFFF" />
             </Pressable>
@@ -839,6 +1104,7 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
 
           {/* Drawer Content Items */}
           <ScrollView
+            ref={drawerScrollViewRef}
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.drawerScrollList}
@@ -846,21 +1112,19 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
             {drawerTab === 'episodes' ? (
               (watchData?.episodes || []).map((ep, idx) => {
                 const isCurrent = ep.slug === episodeSlug;
-                const isFocused = focusedBtn === `drawer-ep-${ep.slug}`;
+                const isFocused = idx === drawerIndex;
                 const epLabel = extractEpisodeNumber(ep.title, idx);
 
                 return (
                   <Pressable
                     key={`drawer-ep-${ep.slug}-${idx}`}
-                    focusable={true}
-                    hasTVPreferredFocus={isDrawerOpen && isCurrent}
-                    onFocus={() => {
-                      setFocusedBtn(`drawer-ep-${ep.slug}`);
-                      resetControlsTimer();
-                    }}
-                    onBlur={() => setFocusedBtn(null)}
+                    focusable={false}
                     onPress={() => {
                       closeDrawer();
+                      setIsOsdVisible(false);
+                      isOsdVisibleRef.current = false;
+                      setActiveTier(1);
+                      activeTierRef.current = 1;
                       onEpisodeChange?.(ep.slug, epLabel);
                     }}
                     style={[
@@ -870,7 +1134,7 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
                     ]}
                   >
                     <View style={styles.episodeCardTopRow}>
-                      <Tv size={16} color={isCurrent ? Colors.primary : '#FFFFFF'} />
+                      <Tv size={16} color={isFocused ? '#FFFFFF' : isCurrent ? Colors.primary : '#FFFFFF'} />
                       <Text
                         style={[
                           styles.drawerCardTitle,
@@ -883,11 +1147,11 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
                       </Text>
                     </View>
                     {isCurrent ? (
-                      <View style={styles.playingBadge}>
+                      <View style={[styles.playingBadge, isFocused && { backgroundColor: 'rgba(255, 255, 255, 0.25)' }]}>
                         <Text style={styles.playingBadgeText}>SEDANG DIPUTAR</Text>
                       </View>
                     ) : (
-                      <Text style={styles.episodeReadyHint}>Tekan OK untuk tonton</Text>
+                      <Text style={[styles.episodeReadyHint, isFocused && { color: '#FFFFFF' }]}>Tekan OK untuk tonton</Text>
                     )}
                   </Pressable>
                 );
@@ -895,20 +1159,18 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
             ) : (
               (watchData?.servers || []).map((s, idx) => {
                 const isSelected = currentServer?.label === s.label;
-                const isFocused = focusedBtn === `drawer-srv-${idx}`;
+                const isFocused = idx === drawerIndex;
                 return (
                   <Pressable
                     key={`drawer-srv-${idx}`}
-                    focusable={true}
-                    hasTVPreferredFocus={isDrawerOpen && isSelected}
-                    onFocus={() => {
-                      setFocusedBtn(`drawer-srv-${idx}`);
-                      resetControlsTimer();
-                    }}
-                    onBlur={() => setFocusedBtn(null)}
+                    focusable={false}
                     onPress={() => {
                       setCurrentServer(s);
                       closeDrawer();
+                      setIsOsdVisible(false);
+                      isOsdVisibleRef.current = false;
+                      setActiveTier(1);
+                      activeTierRef.current = 1;
                       showCenterToast('info', `Ganti ke ${s.label}`, 1500);
                     }}
                     style={[
@@ -929,9 +1191,9 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
                       >
                         {s.label}
                       </Text>
-                      {isSelected && <Check size={16} color={Colors.primary} />}
+                      {isSelected && <Check size={16} color={isFocused ? '#FFFFFF' : Colors.primary} />}
                     </View>
-                    <Text style={styles.serverCardSub}>
+                    <Text style={[styles.serverCardSub, isFocused && { color: 'rgba(255, 255, 255, 0.85)' }]}>
                       {s.isHls ? 'HLS Cepat • Full 1080p' : 'Direct Embed Stream'}
                     </Text>
                   </Pressable>
@@ -978,15 +1240,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     marginTop: 14,
     fontWeight: '600',
-  },
-  playbackZone: {
-    position: 'absolute',
-    top: 64,
-    left: 0,
-    right: 0,
-    bottom: 120,
-    backgroundColor: 'transparent',
-    zIndex: 10,
   },
   centerToastContainer: {
     position: 'absolute',
@@ -1045,9 +1298,10 @@ const styles = StyleSheet.create({
   },
   backButtonFocused: {
     borderColor: '#FFFFFF',
+    borderWidth: 3,
     backgroundColor: Colors.primary,
-    transform: [{ scale: 1.08 }],
-    elevation: 8,
+    transform: [{ scale: 1.1 }],
+    elevation: 12,
   },
   titleWrapper: {
     flex: 1,
@@ -1062,33 +1316,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginTop: 2,
   },
-  topActionsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  topActionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.12)',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 8,
-    gap: 6,
-    borderWidth: 2.5,
-    borderColor: 'transparent',
-  },
-  topActionButtonFocused: {
-    borderColor: '#FFFFFF',
-    backgroundColor: Colors.primary,
-    transform: [{ scale: 1.05 }],
-    elevation: 8,
-  },
-  topActionText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
-  },
   bottomBarGradient: {
     paddingHorizontal: 36,
     paddingBottom: 24,
@@ -1096,15 +1323,38 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(10, 10, 10, 0.92)',
   },
   seekbarContainer: {
-    height: 18,
+    height: 42,
     justifyContent: 'center',
     marginBottom: 6,
+    position: 'relative',
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    borderWidth: 3,
+    borderColor: 'transparent',
+  },
+  seekbarContainerFocused: {
+    borderColor: '#FFFFFF',
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    shadowColor: '#FFFFFF',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 10,
+    elevation: 12,
+  },
+  seekbarRailWrapper: {
+    height: 16,
+    justifyContent: 'center',
+    width: '100%',
   },
   seekbarRail: {
-    height: 5,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    height: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
     borderRadius: 3,
     overflow: 'hidden',
+  },
+  seekbarRailFocused: {
+    height: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.38)',
   },
   seekbarBufferTrack: {
     position: 'absolute',
@@ -1122,13 +1372,45 @@ const styles = StyleSheet.create({
   },
   seekbarThumb: {
     position: 'absolute',
-    width: 14,
-    height: 14,
-    borderRadius: 7,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
     backgroundColor: Colors.primary,
-    top: 2,
+    top: 0,
     borderWidth: 2,
     borderColor: '#FFFFFF',
+  },
+  seekbarThumbFocused: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    top: -3,
+    borderWidth: 3.5,
+    borderColor: '#FFFFFF',
+    backgroundColor: Colors.primary,
+    elevation: 12,
+  },
+  seekbarScrubBadge: {
+    position: 'absolute',
+    top: -24,
+    alignSelf: 'center',
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 3,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.8,
+    shadowRadius: 8,
+    elevation: 16,
+  },
+  seekbarScrubBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.5,
   },
   bottomMetaRow: {
     flexDirection: 'row',
@@ -1191,9 +1473,10 @@ const styles = StyleSheet.create({
   },
   quickNavBtnFocused: {
     borderColor: '#FFFFFF',
+    borderWidth: 3,
     backgroundColor: Colors.primary,
-    transform: [{ scale: 1.05 }],
-    elevation: 8,
+    transform: [{ scale: 1.06 }],
+    elevation: 12,
   },
   quickNavBtnText: {
     color: '#E5E5E5',
@@ -1212,7 +1495,7 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     borderRadius: 8,
     gap: 6,
-    borderWidth: 2,
+    borderWidth: 2.5,
     borderColor: 'transparent',
   },
   quickNavBtnTextSmall: {
