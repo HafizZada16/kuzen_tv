@@ -22,6 +22,7 @@ import {
   fetchKuramanimeLazyStream,
   WatchResponse,
   ServerItem,
+  SubtitleItem,
 } from '../../services/mediaService';
 import { fetchMovieWatch } from '../../services/movieService';
 import {
@@ -29,7 +30,10 @@ import {
   fetchHistoryBySlug,
 } from '../../services/userService';
 import { extractEpisodeNumber } from '../../screens/DetailScreen';
-import { buildQuettaInjectedScript } from './quettaInjectedScript';
+import { parseSubtitles, fetchSubtitleText, SubtitleCue } from '../../utils/subtitleParser';
+import { buildAnimeInjectedScript } from './animeInjectedScript';
+import { buildDonghuaInjectedScript } from './donghuaInjectedScript';
+import { buildMovieInjectedScript } from './movieInjectedScript';
 import { buildHlsPlayerHtml } from './hlsPlayerTemplate';
 import {
   Play,
@@ -42,6 +46,9 @@ import {
   Server as ServerIcon,
   Check,
   Tv,
+  Subtitles as SubtitlesIcon,
+  Scan,
+  Sliders,
 } from 'lucide-react-native';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -120,13 +127,19 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
     label: string;
   } | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [drawerTab, setDrawerTab] = useState<'episodes' | 'servers'>('episodes');
+  const [drawerTab, setDrawerTab] = useState<'episodes' | 'servers' | 'subtitles'>('episodes');
   const [drawerIndex, setDrawerIndex] = useState<number>(0);
   const [activeTier, setActiveTier] = useState<1 | 2 | 3 | 4>(1);
-  const [tier3Selection, setTier3Selection] = useState<'episodes' | 'servers' | 'speed'>('episodes');
+  const [tier3Selection, setTier3Selection] = useState<'episodes' | 'servers' | 'subtitles' | 'quality' | 'speed' | 'aspect'>('episodes');
   const [scrubTime, setScrubTime] = useState<number>(0);
   const [scrubStep, setScrubStep] = useState<number>(10);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1.0);
+  const [aspectRatio, setAspectRatio] = useState<'auto' | '16:9' | 'fill' | 'cover'>('auto');
+  const [hlsLevels, setHlsLevels] = useState<{ index: number; label: string; height: number }[]>([]);
+  const [currentLevelIndex, setCurrentLevelIndex] = useState<number>(-1);
+  const [selectedSubtitle, setSelectedSubtitle] = useState<SubtitleItem | null>(null);
+  const [subtitleCues, setSubtitleCues] = useState<SubtitleCue[]>([]);
+  const [currentCueText, setCurrentCueText] = useState<string | null>(null);
 
   // --- Refs ---
   const webViewRef = useRef<WebView | null>(null);
@@ -147,7 +160,7 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
   const activeTierRef = useRef<1 | 2 | 3 | 4>(1);
   activeTierRef.current = activeTier;
 
-  const tier3SelectionRef = useRef<'episodes' | 'servers' | 'speed'>('episodes');
+  const tier3SelectionRef = useRef<'episodes' | 'servers' | 'subtitles' | 'quality' | 'speed' | 'aspect'>('episodes');
   tier3SelectionRef.current = tier3Selection;
 
   const scrubTimeRef = useRef<number>(0);
@@ -155,6 +168,15 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
 
   const playbackSpeedRef = useRef<number>(1.0);
   playbackSpeedRef.current = playbackSpeed;
+
+  const aspectRatioRef = useRef<'auto' | '16:9' | 'fill' | 'cover'>('auto');
+  aspectRatioRef.current = aspectRatio;
+
+  const selectedSubtitleRef = useRef<SubtitleItem | null>(null);
+  selectedSubtitleRef.current = selectedSubtitle;
+
+  const subtitleCuesRef = useRef<SubtitleCue[]>([]);
+  subtitleCuesRef.current = subtitleCues;
 
   const currentTimeRef = useRef<number>(0);
   currentTimeRef.current = currentTime;
@@ -165,7 +187,7 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
   const drawerIndexRef = useRef<number>(0);
   drawerIndexRef.current = drawerIndex;
 
-  const drawerTabRef = useRef<'episodes' | 'servers'>('episodes');
+  const drawerTabRef = useRef<'episodes' | 'servers' | 'subtitles'>('episodes');
   drawerTabRef.current = drawerTab;
 
   const watchDataRef = useRef<WatchResponse | null>(null);
@@ -258,6 +280,19 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
           preferred = hdMatch;
         }
         setCurrentServer(preferred);
+
+        // Auto-select Indonesian subtitle for movies if available (matching kuzen_v4)
+        if (normSource === 'movie' && Array.isArray(data.subtitles) && data.subtitles.length > 0) {
+          const defaultSub = data.subtitles.find((sub) => {
+            const l = (sub.lang || '').toLowerCase();
+            const lbl = (sub.label || '').toLowerCase();
+            return l === 'id' || l.startsWith('id-') || l.includes('ind') || lbl.includes('indonesia');
+          }) || data.subtitles[0];
+
+          if (defaultSub) {
+            selectSubtitle(defaultSub);
+          }
+        }
 
         // Background lazy-load Kuramadrive HLS from Neon DB for Donghua (matching kuzen_app)
         if (normSource === 'anichin' && data.hybrid?.eligible && data.hybrid?.lazy_endpoint) {
@@ -440,7 +475,120 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
     [duration, currentTime, showCenterToast]
   );
 
-  const openDrawer = useCallback((tab: 'episodes' | 'servers' = 'episodes') => {
+  const cycleAspectRatio = useCallback(() => {
+    const OPTIONS: ('auto' | '16:9' | 'fill' | 'cover')[] = ['auto', '16:9', 'fill', 'cover'];
+    const nextIdx = (OPTIONS.indexOf(aspectRatioRef.current) + 1) % OPTIONS.length;
+    const nextAspect = OPTIONS[nextIdx];
+    setAspectRatio(nextAspect);
+    aspectRatioRef.current = nextAspect;
+    sendQuettaCommand('ASPECT_RATIO', nextAspect);
+    showCenterToast('info', `Rasio: ${nextAspect.toUpperCase()}`, 1000);
+  }, [showCenterToast]);
+
+  const cycleQuality = useCallback(() => {
+    if (!hlsLevels || hlsLevels.length === 0) {
+      showCenterToast('info', 'Kualitas: Otomatis', 1200);
+      return;
+    }
+    const options = [-1, ...hlsLevels.map((l) => l.index)];
+    const currPos = options.indexOf(currentLevelIndex);
+    const nextIdx = options[(currPos + 1) % options.length];
+    setCurrentLevelIndex(nextIdx);
+    sendQuettaCommand('QUALITY', nextIdx);
+    const label = nextIdx === -1 ? 'Otomatis' : (hlsLevels.find((l) => l.index === nextIdx)?.label || 'Auto');
+    showCenterToast('info', `Kualitas: ${label}`, 1200);
+  }, [hlsLevels, currentLevelIndex, sendQuettaCommand, showCenterToast]);
+
+  const closeDrawer = useCallback(() => {
+    Animated.timing(drawerSlideAnim, {
+      toValue: SCREEN_HEIGHT,
+      duration: 200,
+      useNativeDriver: true,
+    }).start(() => {
+      setIsDrawerOpen(false);
+      resetOsdTimer();
+    });
+  }, [drawerSlideAnim, resetOsdTimer]);
+
+  const selectSubtitle = useCallback(
+    async (sub: SubtitleItem | null) => {
+      setSelectedSubtitle(sub);
+      selectedSubtitleRef.current = sub;
+      closeDrawer();
+      setIsOsdVisible(false);
+      isOsdVisibleRef.current = false;
+      setActiveTier(1);
+      activeTierRef.current = 1;
+
+      if (!sub) {
+        setSubtitleCues([]);
+        subtitleCuesRef.current = [];
+        setCurrentCueText(null);
+        showCenterToast('info', 'Subtitle Dinonaktifkan', 1500);
+        return;
+      }
+
+      showCenterToast('info', `Memuat ${sub.label}...`, 1500);
+      try {
+        const text = await fetchSubtitleText(sub.url);
+        if (text) {
+          const parsed = parseSubtitles(text);
+          setSubtitleCues(parsed);
+          subtitleCuesRef.current = parsed;
+          showCenterToast('info', `Subtitle Aktif: ${sub.label}`, 1500);
+        } else {
+          showCenterToast('info', 'Gagal memuat subtitle', 1500);
+        }
+      } catch (err) {
+        showCenterToast('info', 'Gagal memuat subtitle', 1500);
+      }
+    },
+    [closeDrawer, showCenterToast]
+  );
+
+  const handleServerSelect = useCallback(
+    async (s: ServerItem) => {
+      closeDrawer();
+      setIsOsdVisible(false);
+      isOsdVisibleRef.current = false;
+      setActiveTier(1);
+      activeTierRef.current = 1;
+
+      if (normSource === 'movie' && s.providerId && !s.isHls) {
+        showCenterToast('info', `Menghubungkan ke ${s.label}...`, 2000);
+        try {
+          const newWatch = await fetchMovieWatch(episodeSlug, s.providerId);
+          if (newWatch) {
+            setWatchData(newWatch);
+            watchDataRef.current = newWatch;
+            const preferred = newWatch.servers?.[0] || s;
+            setCurrentServer(preferred);
+            currentServerRef.current = preferred;
+
+            if (newWatch.subtitles && newWatch.subtitles.length > 0) {
+              const indSub = newWatch.subtitles.find((sub) => {
+                const l = (sub.lang || '').toLowerCase();
+                const lbl = (sub.label || '').toLowerCase();
+                return l === 'id' || l.startsWith('id-') || l.includes('ind') || lbl.includes('indonesia');
+              }) || newWatch.subtitles[0];
+              if (indSub) selectSubtitle(indSub);
+            }
+            showCenterToast('info', `Server Aktif: ${preferred.label}`, 1500);
+            return;
+          }
+        } catch (e) {
+          console.warn('Failed to switch movie provider:', e);
+        }
+      }
+
+      setCurrentServer(s);
+      currentServerRef.current = s;
+      showCenterToast('info', `Ganti ke ${s.label}`, 1500);
+    },
+    [episodeSlug, normSource, closeDrawer, showCenterToast, selectSubtitle]
+  );
+
+  const openDrawer = useCallback((tab: 'episodes' | 'servers' | 'subtitles' = 'episodes') => {
     setDrawerTab(tab);
     drawerTabRef.current = tab;
 
@@ -449,10 +597,14 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
       const epList = watchDataRef.current?.episodes || [];
       const found = epList.findIndex((e) => e.slug === episodeSlug);
       initIdx = found >= 0 ? found : 0;
-    } else {
+    } else if (tab === 'servers') {
       const srvList = watchDataRef.current?.servers || [];
       const found = srvList.findIndex((s) => s.label === currentServerRef.current?.label);
       initIdx = found >= 0 ? found : 0;
+    } else {
+      const subList = watchDataRef.current?.subtitles || [];
+      const found = subList.findIndex((s) => s.url === selectedSubtitleRef.current?.url);
+      initIdx = found >= 0 ? found + 1 : 0;
     }
     setDrawerIndex(initIdx);
     drawerIndexRef.current = initIdx;
@@ -472,17 +624,6 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
       }, 60);
     });
   }, [episodeSlug, drawerSlideAnim]);
-
-  const closeDrawer = useCallback(() => {
-    Animated.timing(drawerSlideAnim, {
-      toValue: SCREEN_HEIGHT,
-      duration: 200,
-      useNativeDriver: true,
-    }).start(() => {
-      setIsDrawerOpen(false);
-      resetOsdTimer();
-    });
-  }, [drawerSlideAnim, resetOsdTimer]);
 
   // Handle hardware Back button on TV remote
   useEffect(() => {
@@ -510,6 +651,26 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
   // --- 4-Tier Android TV Hardware Remote Key Dispatcher ---
   useEffect(() => {
     const sub = DeviceEventEmitter.addListener('onTVRemoteKey', (keyCode: number) => {
+      // 0. Universal Media Play/Pause Keys (always handled regardless of tier or OSD visibility)
+      if (
+        keyCode === 85 || // MEDIA_PLAY_PAUSE
+        keyCode === 126 || // MEDIA_PLAY
+        keyCode === 127 // MEDIA_PAUSE
+      ) {
+        if (keyCode === 126) {
+          sendQuettaCommand('PLAY');
+          setIsPlaying(true);
+          showCenterToast('play', 'Putar');
+        } else if (keyCode === 127) {
+          sendQuettaCommand('PAUSE');
+          setIsPlaying(false);
+          showCenterToast('pause', 'Jeda');
+        } else {
+          togglePlayPause();
+        }
+        return;
+      }
+
       // 1. Back Key (keyCode 4: BACK, keyCode 111: ESCAPE on PC/Emulator Keyboard)
       if (keyCode === 4 || keyCode === 111) {
         if (activeTierRef.current === 4) {
@@ -539,8 +700,15 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
         }
 
         const isEps = drawerTabRef.current === 'episodes';
+        const isSubs = drawerTabRef.current === 'subtitles';
+        const subItems = [
+          { id: 'off', label: 'Nonaktifkan Subtitle', lang: 'off', url: '' },
+          ...(watchDataRef.current?.subtitles || []),
+        ];
         const items = isEps
           ? watchDataRef.current?.episodes || []
+          : isSubs
+          ? subItems
           : watchDataRef.current?.servers || [];
         if (items.length === 0) return;
 
@@ -579,17 +747,14 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
               activeTierRef.current = 1;
               onEpisodeChange?.(ep.slug, extractEpisodeNumber(ep.title, currentIdx));
             }
+          } else if (isSubs) {
+            const chosen = subItems[currentIdx];
+            selectSubtitle(chosen && chosen.id !== 'off' ? chosen : null);
           } else {
             const srvList = watchDataRef.current?.servers || [];
             const s = srvList[currentIdx];
             if (s) {
-              setCurrentServer(s);
-              closeDrawer();
-              setIsOsdVisible(false);
-              isOsdVisibleRef.current = false;
-              setActiveTier(1);
-              activeTierRef.current = 1;
-              showCenterToast('info', `Ganti ke ${s.label}`, 1500);
+              handleServerSelect(s);
             }
           }
           return;
@@ -655,8 +820,9 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
           setScrubStep(10);
           setActiveTier(3);
           activeTierRef.current = 3;
-          setTier3Selection('episodes');
-          tier3SelectionRef.current = 'episodes';
+          const defaultT3 = normSource === 'movie' ? 'servers' : 'episodes';
+          setTier3Selection(defaultT3);
+          tier3SelectionRef.current = defaultT3;
         } else if (keyCode === 19) { // UP -> Tutup OSD, Kembali ke Watch Fullscreen (SmartTube Style)
           scrubStreakRef.current = 0;
           setScrubStep(10);
@@ -668,25 +834,24 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
         return;
       }
 
-      // 5. Tingkat 3 (Barisan Pilih Episode, Server & Kecepatan): OSD Terbuka
+      // 5. Tingkat 3 (Barisan Pilih Episode, Server, Subtitle, Kualitas, Kecepatan, Rasio): OSD Terbuka
       if (activeTierRef.current === 3) {
         resetOsdTimer();
+        const buttons: ('episodes' | 'servers' | 'subtitles' | 'quality' | 'speed' | 'aspect')[] =
+          normSource === 'movie'
+            ? (hlsLevels.length > 0 ? ['servers', 'subtitles', 'quality', 'speed', 'aspect'] : ['servers', 'subtitles', 'speed', 'aspect'])
+            : (hlsLevels.length > 0 ? ['episodes', 'servers', 'quality', 'speed', 'aspect'] : ['episodes', 'servers', 'speed', 'aspect']);
+
         if (keyCode === 21) { // LEFT
-          if (tier3SelectionRef.current === 'speed') {
-            setTier3Selection('servers');
-            tier3SelectionRef.current = 'servers';
-          } else {
-            setTier3Selection('episodes');
-            tier3SelectionRef.current = 'episodes';
-          }
+          const currIdx = buttons.indexOf(tier3SelectionRef.current);
+          const nextIdx = Math.max(0, currIdx - 1);
+          setTier3Selection(buttons[nextIdx]);
+          tier3SelectionRef.current = buttons[nextIdx];
         } else if (keyCode === 22) { // RIGHT
-          if (tier3SelectionRef.current === 'episodes') {
-            setTier3Selection('servers');
-            tier3SelectionRef.current = 'servers';
-          } else {
-            setTier3Selection('speed');
-            tier3SelectionRef.current = 'speed';
-          }
+          const currIdx = buttons.indexOf(tier3SelectionRef.current);
+          const nextIdx = Math.min(buttons.length - 1, currIdx + 1);
+          setTier3Selection(buttons[nextIdx]);
+          tier3SelectionRef.current = buttons[nextIdx];
         } else if (keyCode === 19) { // UP -> Return to Tingkat 2 (Seekbar)
           setActiveTier(2);
           activeTierRef.current = 2;
@@ -694,6 +859,14 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
         } else if (keyCode === 23 || keyCode === 66 || keyCode === 160 || keyCode === 62) { // OK / ENTER / SPACE
           if (tier3SelectionRef.current === 'speed') {
             cyclePlaybackSpeed();
+          } else if (tier3SelectionRef.current === 'quality') {
+            cycleQuality();
+          } else if (tier3SelectionRef.current === 'aspect') {
+            cycleAspectRatio();
+          } else if (tier3SelectionRef.current === 'subtitles') {
+            openDrawer('subtitles');
+            setActiveTier(4);
+            activeTierRef.current = 4;
           } else if (tier3SelectionRef.current === 'servers') {
             openDrawer('servers');
             setActiveTier(4);
@@ -712,6 +885,12 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
   }, [
     getScrubStep,
     cyclePlaybackSpeed,
+    cycleQuality,
+    cycleAspectRatio,
+    hlsLevels,
+    cycleAspectRatio,
+    selectSubtitle,
+    handleServerSelect,
     togglePlayPause,
     handleSeek,
     openDrawer,
@@ -720,9 +899,10 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
     showCenterToast,
     onEpisodeChange,
     onClose,
+    normSource,
   ]);
 
-  // Handle telemetry incoming from Quetta Media Hijacking script inside WebView
+  // Handle telemetry incoming from player inside WebView
   const handleWebViewMessage = (event: any) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
@@ -735,7 +915,17 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
           setIsBuffering(false);
           break;
         case 'timeupdate':
-          if (data.currentTime !== undefined) setCurrentTime(Math.floor(data.currentTime));
+          if (data.currentTime !== undefined) {
+            const ct = Math.floor(data.currentTime);
+            setCurrentTime(ct);
+            currentTimeRef.current = ct;
+            if (subtitleCuesRef.current.length > 0) {
+              const active = subtitleCuesRef.current.find((c) => ct >= c.start && ct <= c.end);
+              setCurrentCueText(active ? active.text : null);
+            } else {
+              setCurrentCueText(null);
+            }
+          }
           if (data.duration && data.duration > 0) setDuration(Math.floor(data.duration));
           if (data.buffered !== undefined) setBufferedTime(Math.floor(data.buffered));
           break;
@@ -744,6 +934,14 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
           break;
         case 'buffering':
           setIsBuffering(!!data.isBuffering);
+          break;
+        case 'hls_levels':
+          if (Array.isArray(data.levels) && data.levels.length > 0) {
+            setHlsLevels(data.levels);
+            if (typeof data.currentLevel === 'number') {
+              setCurrentLevelIndex(data.currentLevel);
+            }
+          }
           break;
       }
     } catch (_) {}
@@ -797,11 +995,18 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
 
   const injectedJavaScript = useMemo(() => {
     if (isDirectHls) return undefined;
-    return buildQuettaInjectedScript({
+    const opts = {
       startTime: initialResumeTimeRef.current,
       totalDuration: duration,
-    });
-  }, [isDirectHls, streamUrl, duration]);
+    };
+    if (normSource === 'movie') {
+      return buildMovieInjectedScript(opts);
+    }
+    if (normSource === 'anichin') {
+      return buildDonghuaInjectedScript(opts);
+    }
+    return buildAnimeInjectedScript(opts);
+  }, [isDirectHls, normSource, duration]);
 
   return (
     <View style={styles.playerContainer}>
@@ -818,15 +1023,16 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
             source={webViewSource}
             injectedJavaScript={injectedJavaScript}
             onMessage={handleWebViewMessage}
-            style={styles.webView}
+            style={[styles.webView, { backgroundColor: '#000000' }]}
+            containerStyle={{ backgroundColor: '#000000' }}
             allowsInlineMediaPlayback
             mediaPlaybackRequiresUserAction={false}
             javaScriptEnabled
             domStorageEnabled
-            scalesPageToFit
+            scalesPageToFit={false}
             originWhitelist={['*']}
             focusable={false}
-            androidLayerType="hardware"
+            mixedContentMode="always"
             userAgent="Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
             onShouldStartLoadWithRequest={(request) => {
               const reqUrl = request.url || '';
@@ -877,6 +1083,15 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
         )}
       </View>
 
+      {/* Subtitle High-Contrast Overlay for TV */}
+      {currentCueText ? (
+        <View style={styles.subtitleContainer} pointerEvents="none">
+          <View style={styles.subtitlePill}>
+            <Text style={styles.subtitleText}>{currentCueText.replace(/<[^>]+>/g, '')}</Text>
+          </View>
+        </View>
+      ) : null}
+
       {/* 2. Center Action Toast (Appears only on Play/Pause, Seek, or Resume) */}
       {centerToast && (
         <View style={styles.centerToastContainer} pointerEvents="none">
@@ -922,7 +1137,7 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
                 {animeTitle}
               </Text>
               <Text style={styles.episodeSubtitle} numberOfLines={1}>
-                {extractEpisodeNumber(episodeTitle, 0)} • {currentServer?.label || 'Quetta Player'}
+                {normSource === 'movie' ? 'Full Movie' : extractEpisodeNumber(episodeTitle, 0)} • {currentServer?.label || (currentServer?.isHls ? 'HLS Stream' : 'Quetta Stream')}
               </Text>
             </View>
           </View>
@@ -980,69 +1195,157 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
               <View style={styles.streamMetaWrapper}>
                 <View style={styles.qualityPill}>
                   <Text style={styles.qualityText}>
-                    {currentServer?.isHls ? 'HLS CEPAT 1080P' : 'QUETTA STREAM'}
+                    {currentServer?.isHls
+                      ? `HLS CEPAT ${currentLevelIndex === -1 ? 'AUTO' : (hlsLevels.find((l) => l.index === currentLevelIndex)?.label?.toUpperCase() || '1080P')}`
+                      : 'QUETTA STREAM'}
                   </Text>
                 </View>
               </View>
             </View>
 
-            {/* Tingkat 3: Barisan Pilih Episode, Server & Kecepatan */}
+            {/* Tingkat 3: Barisan Quick Actions (Movie: Server, Subtitle, Speed, Aspect | Anime: Episode, Server, Speed, Aspect) */}
             <View style={styles.quickNavRow}>
-              <Pressable
-                focusable={false}
-                onPress={() => {
-                  setTier3Selection('episodes');
-                  tier3SelectionRef.current = 'episodes';
-                  openDrawer('episodes');
-                  setActiveTier(4);
-                  activeTierRef.current = 4;
-                }}
-                style={[
-                  styles.quickNavBtn,
-                  activeTier === 3 && tier3Selection === 'episodes' && styles.quickNavBtnFocused,
-                ]}
-              >
-                <ListVideo
-                  size={20}
-                  color={activeTier === 3 && tier3Selection === 'episodes' ? '#FFFFFF' : Colors.primary}
-                />
-                <Text
-                  style={[
-                    styles.quickNavBtnText,
-                    activeTier === 3 && tier3Selection === 'episodes' && styles.quickNavBtnTextFocused,
-                  ]}
-                >
-                  Daftar Episode ({watchData?.episodes?.length || 0})
-                </Text>
-              </Pressable>
+              {normSource === 'movie' ? (
+                <>
+                  <Pressable
+                    focusable={false}
+                    onPress={() => {
+                      setTier3Selection('servers');
+                      tier3SelectionRef.current = 'servers';
+                      openDrawer('servers');
+                      setActiveTier(4);
+                      activeTierRef.current = 4;
+                    }}
+                    style={[
+                      styles.quickNavBtn,
+                      activeTier === 3 && tier3Selection === 'servers' && styles.quickNavBtnFocused,
+                    ]}
+                  >
+                    <ServerIcon
+                      size={20}
+                      color={activeTier === 3 && tier3Selection === 'servers' ? '#FFFFFF' : Colors.primary}
+                    />
+                    <Text
+                      style={[
+                        styles.quickNavBtnText,
+                        activeTier === 3 && tier3Selection === 'servers' && styles.quickNavBtnTextFocused,
+                      ]}
+                    >
+                      Pilihan Server ({watchData?.servers?.length || 0})
+                    </Text>
+                  </Pressable>
 
-              <Pressable
-                focusable={false}
-                onPress={() => {
-                  setTier3Selection('servers');
-                  tier3SelectionRef.current = 'servers';
-                  openDrawer('servers');
-                  setActiveTier(4);
-                  activeTierRef.current = 4;
-                }}
-                style={[
-                  styles.quickNavBtn,
-                  activeTier === 3 && tier3Selection === 'servers' && styles.quickNavBtnFocused,
-                ]}
-              >
-                <ServerIcon
-                  size={20}
-                  color={activeTier === 3 && tier3Selection === 'servers' ? '#FFFFFF' : Colors.primary}
-                />
-                <Text
+                  <Pressable
+                    focusable={false}
+                    onPress={() => {
+                      setTier3Selection('subtitles');
+                      tier3SelectionRef.current = 'subtitles';
+                      openDrawer('subtitles');
+                      setActiveTier(4);
+                      activeTierRef.current = 4;
+                    }}
+                    style={[
+                      styles.quickNavBtn,
+                      activeTier === 3 && tier3Selection === 'subtitles' && styles.quickNavBtnFocused,
+                    ]}
+                  >
+                    <SubtitlesIcon
+                      size={20}
+                      color={activeTier === 3 && tier3Selection === 'subtitles' ? '#FFFFFF' : Colors.primary}
+                    />
+                    <Text
+                      style={[
+                        styles.quickNavBtnText,
+                        activeTier === 3 && tier3Selection === 'subtitles' && styles.quickNavBtnTextFocused,
+                      ]}
+                    >
+                      {selectedSubtitle ? selectedSubtitle.label : 'Sub Off'}
+                    </Text>
+                  </Pressable>
+                </>
+              ) : (
+                <>
+                  <Pressable
+                    focusable={false}
+                    onPress={() => {
+                      setTier3Selection('episodes');
+                      tier3SelectionRef.current = 'episodes';
+                      openDrawer('episodes');
+                      setActiveTier(4);
+                      activeTierRef.current = 4;
+                    }}
+                    style={[
+                      styles.quickNavBtn,
+                      activeTier === 3 && tier3Selection === 'episodes' && styles.quickNavBtnFocused,
+                    ]}
+                  >
+                    <ListVideo
+                      size={20}
+                      color={activeTier === 3 && tier3Selection === 'episodes' ? '#FFFFFF' : Colors.primary}
+                    />
+                    <Text
+                      style={[
+                        styles.quickNavBtnText,
+                        activeTier === 3 && tier3Selection === 'episodes' && styles.quickNavBtnTextFocused,
+                      ]}
+                    >
+                      Daftar Episode ({watchData?.episodes?.length || 0})
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    focusable={false}
+                    onPress={() => {
+                      setTier3Selection('servers');
+                      tier3SelectionRef.current = 'servers';
+                      openDrawer('servers');
+                      setActiveTier(4);
+                      activeTierRef.current = 4;
+                    }}
+                    style={[
+                      styles.quickNavBtn,
+                      activeTier === 3 && tier3Selection === 'servers' && styles.quickNavBtnFocused,
+                    ]}
+                  >
+                    <ServerIcon
+                      size={20}
+                      color={activeTier === 3 && tier3Selection === 'servers' ? '#FFFFFF' : Colors.primary}
+                    />
+                    <Text
+                      style={[
+                        styles.quickNavBtnText,
+                        activeTier === 3 && tier3Selection === 'servers' && styles.quickNavBtnTextFocused,
+                      ]}
+                    >
+                      Pilihan Server ({watchData?.servers?.length || 0})
+                    </Text>
+                  </Pressable>
+                </>
+              )}
+
+              {hlsLevels.length > 0 && (
+                <Pressable
+                  focusable={false}
+                  onPress={cycleQuality}
                   style={[
-                    styles.quickNavBtnText,
-                    activeTier === 3 && tier3Selection === 'servers' && styles.quickNavBtnTextFocused,
+                    styles.quickNavBtn,
+                    activeTier === 3 && tier3Selection === 'quality' && styles.quickNavBtnFocused,
                   ]}
                 >
-                  Pilihan Server ({watchData?.servers?.length || 0})
-                </Text>
-              </Pressable>
+                  <Sliders
+                    size={18}
+                    color={activeTier === 3 && tier3Selection === 'quality' ? '#FFFFFF' : Colors.primary}
+                  />
+                  <Text
+                    style={[
+                      styles.quickNavBtnText,
+                      activeTier === 3 && tier3Selection === 'quality' && styles.quickNavBtnTextFocused,
+                    ]}
+                  >
+                    HD {currentLevelIndex === -1 ? 'AUTO' : (hlsLevels.find((l) => l.index === currentLevelIndex)?.label || 'AUTO')}
+                  </Text>
+                </Pressable>
+              )}
 
               <Pressable
                 focusable={false}
@@ -1066,6 +1369,28 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
                 </Text>
               </Pressable>
 
+              <Pressable
+                focusable={false}
+                onPress={cycleAspectRatio}
+                style={[
+                  styles.quickNavBtn,
+                  activeTier === 3 && tier3Selection === 'aspect' && styles.quickNavBtnFocused,
+                ]}
+              >
+                <Scan
+                  size={18}
+                  color={activeTier === 3 && tier3Selection === 'aspect' ? '#FFFFFF' : Colors.primary}
+                />
+                <Text
+                  style={[
+                    styles.quickNavBtnText,
+                    activeTier === 3 && tier3Selection === 'aspect' && styles.quickNavBtnTextFocused,
+                  ]}
+                >
+                  📺 {aspectRatio.toUpperCase()}
+                </Text>
+              </Pressable>
+
               <View style={styles.dpadHintContainer}>
                 <Text style={styles.dpadHintText}>
                   {activeTier === 2
@@ -1078,7 +1403,7 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
         </View>
       )}
 
-      {/* 4. Bottom OSD Drawer (Episode & Server Switcher) - ONLY RENDERED WHEN isDrawerOpen */}
+      {/* 4. Bottom OSD Drawer (Episode, Server & Subtitle Switcher) - ONLY RENDERED WHEN isDrawerOpen */}
       {isDrawerOpen && (
         <Animated.View
           style={[
@@ -1088,39 +1413,79 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
         >
           <View style={styles.drawerHeader}>
             <View style={styles.drawerTabsRow}>
-              <View
-                style={[
-                  styles.drawerTabButton,
-                  drawerTab === 'episodes' && styles.drawerTabButtonActive,
-                ]}
-              >
-                <ListVideo size={18} color={drawerTab === 'episodes' ? Colors.primary : Colors.textMuted} />
-                <Text
-                  style={[
-                    styles.drawerTabText,
-                    drawerTab === 'episodes' && styles.drawerTabTextActive,
-                  ]}
-                >
-                  Daftar Episode ({watchData?.episodes?.length || 0})
-                </Text>
-              </View>
+              {normSource === 'movie' ? (
+                <>
+                  <View
+                    style={[
+                      styles.drawerTabButton,
+                      drawerTab === 'servers' && styles.drawerTabButtonActive,
+                    ]}
+                  >
+                    <ServerIcon size={18} color={drawerTab === 'servers' ? Colors.primary : Colors.textMuted} />
+                    <Text
+                      style={[
+                        styles.drawerTabText,
+                        drawerTab === 'servers' && styles.drawerTabTextActive,
+                      ]}
+                    >
+                      Pilihan Server ({watchData?.servers?.length || 0})
+                    </Text>
+                  </View>
 
-              <View
-                style={[
-                  styles.drawerTabButton,
-                  drawerTab === 'servers' && styles.drawerTabButtonActive,
-                ]}
-              >
-                <ServerIcon size={18} color={drawerTab === 'servers' ? Colors.primary : Colors.textMuted} />
-                <Text
-                  style={[
-                    styles.drawerTabText,
-                    drawerTab === 'servers' && styles.drawerTabTextActive,
-                  ]}
-                >
-                  Pilihan Server ({watchData?.servers?.length || 0})
-                </Text>
-              </View>
+                  <View
+                    style={[
+                      styles.drawerTabButton,
+                      drawerTab === 'subtitles' && styles.drawerTabButtonActive,
+                    ]}
+                  >
+                    <SubtitlesIcon size={18} color={drawerTab === 'subtitles' ? Colors.primary : Colors.textMuted} />
+                    <Text
+                      style={[
+                        styles.drawerTabText,
+                        drawerTab === 'subtitles' && styles.drawerTabTextActive,
+                      ]}
+                    >
+                      Pilihan Subtitle ({watchData?.subtitles?.length || 0})
+                    </Text>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <View
+                    style={[
+                      styles.drawerTabButton,
+                      drawerTab === 'episodes' && styles.drawerTabButtonActive,
+                    ]}
+                  >
+                    <ListVideo size={18} color={drawerTab === 'episodes' ? Colors.primary : Colors.textMuted} />
+                    <Text
+                      style={[
+                        styles.drawerTabText,
+                        drawerTab === 'episodes' && styles.drawerTabTextActive,
+                      ]}
+                    >
+                      Daftar Episode ({watchData?.episodes?.length || 0})
+                    </Text>
+                  </View>
+
+                  <View
+                    style={[
+                      styles.drawerTabButton,
+                      drawerTab === 'servers' && styles.drawerTabButtonActive,
+                    ]}
+                  >
+                    <ServerIcon size={18} color={drawerTab === 'servers' ? Colors.primary : Colors.textMuted} />
+                    <Text
+                      style={[
+                        styles.drawerTabText,
+                        drawerTab === 'servers' && styles.drawerTabTextActive,
+                      ]}
+                    >
+                      Pilihan Server ({watchData?.servers?.length || 0})
+                    </Text>
+                  </View>
+                </>
+              )}
             </View>
 
             <Pressable
@@ -1186,6 +1551,44 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
                   </Pressable>
                 );
               })
+            ) : drawerTab === 'subtitles' ? (
+              [
+                { id: 'off', label: 'Nonaktifkan Subtitle', lang: 'off', url: '' },
+                ...(watchData?.subtitles || []),
+              ].map((sub, idx) => {
+                const isSelected = (!selectedSubtitle && sub.id === 'off') || (selectedSubtitle?.url === sub.url);
+                const isFocused = idx === drawerIndex;
+                return (
+                  <Pressable
+                    key={`drawer-sub-${sub.id || idx}`}
+                    focusable={false}
+                    onPress={() => selectSubtitle(sub.id !== 'off' ? sub : null)}
+                    style={[
+                      styles.drawerCardItem,
+                      styles.serverCardItem,
+                      isSelected && styles.drawerCardItemActive,
+                      isFocused && styles.drawerCardItemFocused,
+                    ]}
+                  >
+                    <View style={styles.serverCardHeader}>
+                      <Text
+                        style={[
+                          styles.drawerCardTitle,
+                          isSelected && styles.drawerCardTitleActive,
+                          isFocused && styles.drawerCardTitleFocused,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {sub.label}
+                      </Text>
+                      {isSelected && <Check size={16} color={isFocused ? '#FFFFFF' : Colors.primary} />}
+                    </View>
+                    <Text style={[styles.serverCardSub, isFocused && { color: 'rgba(255, 255, 255, 0.85)' }]}>
+                      {sub.id === 'off' ? 'Matikan Teks Layar' : `Bahasa: ${sub.lang?.toUpperCase() || 'ID'}`}
+                    </Text>
+                  </Pressable>
+                );
+              })
             ) : (
               (watchData?.servers || []).map((s, idx) => {
                 const isSelected = currentServer?.label === s.label;
@@ -1194,15 +1597,7 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
                   <Pressable
                     key={`drawer-srv-${idx}`}
                     focusable={false}
-                    onPress={() => {
-                      setCurrentServer(s);
-                      closeDrawer();
-                      setIsOsdVisible(false);
-                      isOsdVisibleRef.current = false;
-                      setActiveTier(1);
-                      activeTierRef.current = 1;
-                      showCenterToast('info', `Ganti ke ${s.label}`, 1500);
-                    }}
+                    onPress={() => handleServerSelect(s)}
                     style={[
                       styles.drawerCardItem,
                       styles.serverCardItem,
@@ -1679,5 +2074,33 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 9,
     fontWeight: '800',
+  },
+  subtitleContainer: {
+    position: 'absolute',
+    bottom: 85,
+    left: 40,
+    right: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 50,
+  },
+  subtitlePill: {
+    backgroundColor: 'rgba(0, 0, 0, 0.82)',
+    paddingHorizontal: 22,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    maxWidth: '85%',
+  },
+  subtitleText: {
+    color: '#FFFF55',
+    fontSize: 22,
+    fontWeight: '800',
+    textAlign: 'center',
+    letterSpacing: 0.5,
+    textShadowColor: '#000000',
+    textShadowOffset: { width: 2, height: 2 },
+    textShadowRadius: 4,
   },
 });

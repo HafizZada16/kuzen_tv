@@ -77,6 +77,14 @@ export interface ServerItem {
   isHls?: boolean;
   badge?: string;
   rawUrl?: string;
+  providerId?: string;
+}
+
+export interface SubtitleItem {
+  id?: string;
+  label?: string;
+  lang?: string;
+  url: string;
 }
 
 export interface WatchResponse {
@@ -85,6 +93,7 @@ export interface WatchResponse {
   stream_url: string;
   anime_slug?: string;
   servers?: ServerItem[];
+  subtitles?: SubtitleItem[];
   video_sources?: { label: string; file: string; type: string }[];
   episodes?: { title: string; slug: string }[];
   downloads?: { quality: string; links: { label: string; url: string }[] }[];

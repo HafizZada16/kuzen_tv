@@ -187,16 +187,19 @@ export async function fetchMovieWatch(
 
     const servers: ServerItem[] = [];
 
-    // 1. Direct native HLS/MP4 sources if available from provider
-    if (Array.isArray(watchData?.sources) && watchData.sources.length > 0) {
+    // 1. Direct native HLS/MP4 streams from the preferred provider (PRIMARY - 100% stable HLS)
+    const hasNativeSources = Array.isArray(watchData?.sources) && watchData.sources.length > 0;
+    if (hasNativeSources) {
       watchData.sources.forEach((s: any, idx: number) => {
-        if (s.file) {
-          const isHls = s.type === 'hls' || s.file.includes('.m3u8');
+        const streamUrl = s.url || s.file;
+        if (streamUrl) {
+          const isHls = s.type === 'hls' || streamUrl.includes('.m3u8');
           servers.push({
-            label: s.server || `Mirror ${idx + 1} (${isHls ? 'HLS' : 'Direct'})`,
-            url: s.file,
-            isHls,
+            label: s.server || `${preferredProvider.toUpperCase()} Stream ${idx + 1} (${isHls ? 'HLS' : 'Direct'})`,
+            url: streamUrl,
+            isHls: true, // Direct stream played via Hls.js in buildHlsPlayerHtml
             badge: isHls ? 'HLS' : 'MP4',
+            providerId: preferredProvider,
           });
         }
       });
@@ -210,8 +213,23 @@ export async function fetchMovieWatch(
         url: embedUrl,
         isHls: false,
         badge: prov.badge,
+        providerId: prov.id,
       });
     });
+
+    const subtitles: any[] = [];
+    if (Array.isArray(watchData?.subtitles)) {
+      watchData.subtitles.forEach((sub: any, idx: number) => {
+        if (sub.url) {
+          subtitles.push({
+            id: sub.id || `sub-${idx}`,
+            label: sub.label || (sub.lang ? `Sub ${sub.lang.toUpperCase()}` : `Subtitle ${idx + 1}`),
+            lang: sub.lang || 'id',
+            url: sub.url,
+          });
+        }
+      });
+    }
 
     const defaultStreamUrl =
       servers[0]?.url ||
@@ -226,6 +244,7 @@ export async function fetchMovieWatch(
       slug: movieId,
       stream_url: defaultStreamUrl,
       servers,
+      subtitles,
       episodes: [
         {
           title: 'Tonton Film Lengkap',

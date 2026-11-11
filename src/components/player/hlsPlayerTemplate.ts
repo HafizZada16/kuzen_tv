@@ -16,7 +16,7 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
   const { streamUrl, initTime = 0 } = options;
 
   let actualHlsUrl = streamUrl;
-  if (actualHlsUrl.startsWith('http') && !actualHlsUrl.includes('/cors-proxy')) {
+  if (actualHlsUrl.includes('kurama') && !actualHlsUrl.includes('/cors-proxy')) {
     actualHlsUrl = `https://kuzen.web.id/api/cors-proxy?url=${encodeURIComponent(actualHlsUrl)}`;
   }
 
@@ -42,28 +42,31 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
             overflow: hidden !important;
             margin: 0 !important;
             padding: 0 !important;
-            position: relative !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
         }
         #kuzen-video {
-            position: absolute !important;
-            top: 0 !important;
-            left: 0 !important;
             width: 100% !important;
             height: 100% !important;
             max-width: 100% !important;
             max-height: 100% !important;
             object-fit: contain !important;
             background: #000000 !important;
-            z-index: 10 !important;
         }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.7/dist/hls.min.js"></script>
 </head>
 <body>
-    <video id="kuzen-video" playsinline webkit-playsinline preload="auto"></video>
+    <video id="kuzen-video" playsinline webkit-playsinline x5-playsinline preload="auto" autoplay></video>
     <script>
         (function() {
             var video = document.getElementById('kuzen-video');
+            try {
+                video.setAttribute('playsinline', 'true');
+                video.setAttribute('webkit-playsinline', 'true');
+                video.setAttribute('x5-playsinline', 'true');
+            } catch(e) {}
             var streamUrl = ${JSON.stringify(actualHlsUrl)};
             var initTime = ${initTime > 0 ? initTime : 0};
             var hlsInstance = null;
@@ -133,8 +136,20 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
                         if (typeof val === 'number') {
                             video.playbackRate = val;
                         }
-                    } else if (action === 'ASPECT') {
-                        video.style.objectFit = val || 'contain';
+                    } else if (action === 'ASPECT' || action === 'ASPECT_RATIO') {
+                        if (val === 'fill') {
+                            video.style.objectFit = 'fill';
+                        } else if (val === 'cover' || val === '16:9') {
+                            video.style.objectFit = 'cover';
+                        } else {
+                            video.style.objectFit = 'contain';
+                        }
+                    } else if (action === 'QUALITY') {
+                        if (hlsInstance) {
+                            var targetLvl = typeof val === 'number' ? val : -1;
+                            hlsInstance.currentLevel = targetLvl;
+                            hlsInstance.loadLevel = targetLvl;
+                        }
                     }
                 } catch(e) {}
             };
@@ -144,7 +159,9 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
                 postMsg({
                     type: 'video_ready',
                     duration: video.duration || 0,
-                    isPlaying: !video.paused
+                    isPlaying: !video.paused,
+                    videoWidth: video.videoWidth || 0,
+                    videoHeight: video.videoHeight || 0
                 });
             });
 
@@ -152,7 +169,9 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
                 postMsg({
                     type: 'video_ready',
                     duration: video.duration || 0,
-                    isPlaying: !video.paused
+                    isPlaying: !video.paused,
+                    videoWidth: video.videoWidth || 0,
+                    videoHeight: video.videoHeight || 0
                 });
                 postMsg({
                     type: 'buffering',
@@ -242,16 +261,17 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
 
             function setupHls() {
                 if (window.Hls && Hls.isSupported()) {
-                    // Aggressive buffer configuration for Android TV:
-                    // Loads at least 60 seconds of buffer ahead (max 180s) with 120MB memory buffer
+                    // Safe buffer configuration for Android TV:
+                    // Limits resolution to player viewport size and avoids running out of decoder memory
                     var hls = new Hls({
                         debug: false,
                         enableWorker: true,
                         lowLatencyMode: false,
-                        backBufferLength: 90,
-                        maxBufferLength: 60,
-                        maxMaxBufferLength: 180,
-                        maxBufferSize: 120 * 1024 * 1024,
+                        capLevelToPlayerSize: true,
+                        backBufferLength: 60,
+                        maxBufferLength: 30,
+                        maxMaxBufferLength: 60,
+                        maxBufferSize: 60 * 1024 * 1024,
                         maxBufferHole: 0.5,
                         highBufferWatchdogPeriod: 2,
                         nudgeOffset: 0.2,
@@ -269,11 +289,44 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
                     hls.loadSource(streamUrl);
                     hls.attachMedia(video);
 
-                    hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                    hls.on(Hls.Events.MANIFEST_PARSED, function(event, data) {
+                        var targetLevel = -1;
+                        if (data && data.levels && data.levels.length > 0) {
+                            // Capping initial level to <= 1080p so Android TV MediaCodec doesn't crash on 4K (2160p) streams
+                            for (var li = 0; li < data.levels.length; li++) {
+                                var lh = data.levels[li].height;
+                                if (lh && lh <= 1080) {
+                                    if (targetLevel === -1 || lh > (data.levels[targetLevel] ? data.levels[targetLevel].height : 0)) {
+                                        targetLevel = li;
+                                    }
+                                }
+                            }
+                            if (targetLevel !== -1) {
+                                hls.currentLevel = targetLevel;
+                                hls.loadLevel = targetLevel;
+                            }
+
+                            var parsedLevels = data.levels.map(function(lvl, idx) {
+                                return {
+                                    index: idx,
+                                    label: lvl.height ? (lvl.height + 'p') : ('Kualitas ' + (idx + 1)),
+                                    height: lvl.height || 0,
+                                    bitrate: lvl.bitrate || 0
+                                };
+                            });
+                            postMsg({
+                                type: 'hls_levels',
+                                levels: parsedLevels,
+                                currentLevel: targetLevel
+                            });
+                        }
+
                         postMsg({
                             type: 'video_ready',
                             duration: video.duration || 0,
-                            isPlaying: true
+                            isPlaying: true,
+                            videoWidth: video.videoWidth || 0,
+                            videoHeight: video.videoHeight || 0
                         });
                         postMsg({
                             type: 'buffering',
