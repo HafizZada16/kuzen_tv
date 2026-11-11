@@ -113,6 +113,7 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(1440); // 24 minutes default
   const [bufferedTime, setBufferedTime] = useState(0);
+  const initialResumeTimeRef = useRef<number>(0);
   const [isOsdVisible, setIsOsdVisible] = useState(false);
   const [centerToast, setCenterToast] = useState<{
     type: 'play' | 'pause' | 'rewind' | 'forward' | 'info';
@@ -282,12 +283,15 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
         const history = await fetchHistoryBySlug(episodeSlug);
         if (history && history.current_time && history.current_time > 10) {
           const resumeTime = history.current_time;
+          initialResumeTimeRef.current = resumeTime;
           setCurrentTime(resumeTime);
           setCenterToast({
             type: 'info',
             label: `Melanjutkan dari ${formatTime(resumeTime)}`,
           });
           setTimeout(() => setCenterToast(null), 2500);
+        } else {
+          initialResumeTimeRef.current = 0;
         }
       } catch (err) {
         console.error('Failed to load stream data for TV:', err);
@@ -777,13 +781,27 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
     };
   }, [streamUrl, normSource]);
 
-  const webViewSource = isDirectHls
-    ? { html: buildHlsPlayerHtml({ streamUrl, initTime: currentTime }), baseUrl: 'https://kuzen.web.id' }
-    : { uri: streamUrl, headers: webViewHeaders };
+  const webViewSource = useMemo(() => {
+    if (!streamUrl) return { html: '<html><body style="background:#000;"></body></html>' };
+    if (isDirectHls) {
+      return {
+        html: buildHlsPlayerHtml({ streamUrl, initTime: initialResumeTimeRef.current }),
+        baseUrl: 'https://kuzen.web.id',
+      };
+    }
+    return {
+      uri: streamUrl,
+      headers: webViewHeaders,
+    };
+  }, [streamUrl, isDirectHls, webViewHeaders]);
 
-  const injectedJavaScript = !isDirectHls
-    ? buildQuettaInjectedScript({ startTime: currentTime, totalDuration: duration })
-    : undefined;
+  const injectedJavaScript = useMemo(() => {
+    if (isDirectHls) return undefined;
+    return buildQuettaInjectedScript({
+      startTime: initialResumeTimeRef.current,
+      totalDuration: duration,
+    });
+  }, [isDirectHls, streamUrl, duration]);
 
   return (
     <View style={styles.playerContainer}>
@@ -808,10 +826,11 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
             scalesPageToFit
             originWhitelist={['*']}
             focusable={false}
+            androidLayerType="hardware"
             userAgent="Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
             onShouldStartLoadWithRequest={(request) => {
               const reqUrl = request.url || '';
-              if (isDirectHls) return true;
+              if (isDirectHls || normSource === 'movie') return true;
               if (
                 reqUrl.startsWith('about:') ||
                 reqUrl.startsWith('blob:') ||
@@ -839,7 +858,7 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
                 'playdesu', 'odstream', 'odsstream', 'odcdn', 'otakudesu', 'moedesu',
                 'desustream', 'ondesu', 'pdrain', 'pixeldrain', 'kuramadrive', 'kuramanime',
                 'anichin', 'animexin', 'mega.nz', 'google.com', 'googleapis.com', 'blogger.com',
-                'acefile', 'kuzen.web.id'
+                'acefile', 'kuzen.web.id', 'framextv', 'vidsrc', 'embed', 'stream'
               ];
               return allowedHosts.some((h) => reqUrl.toLowerCase().includes(h));
             }}

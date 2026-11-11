@@ -29,30 +29,38 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
             box-sizing: border-box;
             margin: 0;
             padding: 0;
-            -webkit-tap-highlight-color: transparent !important;
-            -webkit-tap-highlight-color: rgba(0,0,0,0) !important;
-            -webkit-touch-callout: none !important;
             outline: none !important;
-        }
-        html, body {
-            width: 100%;
-            height: 100%;
-            background: #000;
-            overflow: hidden;
-            display: flex;
-            align-items: center;
-            justify-content: center;
             -webkit-tap-highlight-color: transparent !important;
-            -webkit-tap-highlight-color: rgba(0,0,0,0) !important;
+            -webkit-touch-callout: none !important;
             user-select: none !important;
             -webkit-user-select: none !important;
         }
-        video { width: 100%; height: 100%; max-width: 100%; max-height: 100%; object-fit: contain; }
+        html, body {
+            width: 100% !important;
+            height: 100% !important;
+            background: #000000 !important;
+            overflow: hidden !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            position: relative !important;
+        }
+        #kuzen-video {
+            position: absolute !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
+            max-width: 100% !important;
+            max-height: 100% !important;
+            object-fit: contain !important;
+            background: #000000 !important;
+            z-index: 10 !important;
+        }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.7/dist/hls.min.js"></script>
 </head>
 <body>
-    <video id="kuzen-video" playsinline webkit-playsinline autoplay preload="auto"></video>
+    <video id="kuzen-video" playsinline webkit-playsinline preload="auto"></video>
     <script>
         (function() {
             var video = document.getElementById('kuzen-video');
@@ -83,7 +91,14 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
                 try {
                     if (action === 'PLAY') {
                         userWantsPaused = false;
+                        if (hlsInstance) {
+                            try { hlsInstance.startLoad(); } catch(e) {}
+                        }
                         video.play().catch(function() {});
+                        postMsg({
+                            type: 'playstate',
+                            isPlaying: true
+                        });
                     } else if (action === 'PAUSE') {
                         userWantsPaused = true;
                         video.pause();
@@ -94,7 +109,14 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
                     } else if (action === 'TOGGLE') {
                         if (userWantsPaused || video.paused) {
                             userWantsPaused = false;
+                            if (hlsInstance) {
+                                try { hlsInstance.startLoad(); } catch(e) {}
+                            }
                             video.play().catch(function() {});
+                            postMsg({
+                                type: 'playstate',
+                                isPlaying: true
+                            });
                         } else {
                             userWantsPaused = true;
                             video.pause();
@@ -135,6 +157,17 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
                 postMsg({
                     type: 'buffering',
                     isBuffering: false
+                });
+            });
+
+            video.addEventListener('play', function() {
+                if (userWantsPaused) {
+                    try { video.pause(); } catch(e) {}
+                    return;
+                }
+                postMsg({
+                    type: 'playstate',
+                    isPlaying: true
                 });
             });
 
@@ -209,20 +242,26 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
 
             function setupHls() {
                 if (window.Hls && Hls.isSupported()) {
+                    // Aggressive buffer configuration for Android TV:
+                    // Loads at least 60 seconds of buffer ahead (max 180s) with 120MB memory buffer
                     var hls = new Hls({
                         debug: false,
                         enableWorker: true,
                         lowLatencyMode: false,
                         backBufferLength: 90,
                         maxBufferLength: 60,
-                        maxMaxBufferLength: 120,
-                        maxBufferSize: 60 * 1024 * 1024,
-                        manifestLoadingTimeOut: 15000,
-                        manifestLoadingMaxRetry: 4,
-                        levelLoadingTimeOut: 15000,
-                        levelLoadingMaxRetry: 4,
-                        fragLoadingTimeOut: 15000,
-                        fragLoadingMaxRetry: 4,
+                        maxMaxBufferLength: 180,
+                        maxBufferSize: 120 * 1024 * 1024,
+                        maxBufferHole: 0.5,
+                        highBufferWatchdogPeriod: 2,
+                        nudgeOffset: 0.2,
+                        nudgeMaxRetry: 5,
+                        manifestLoadingTimeOut: 20000,
+                        manifestLoadingMaxRetry: 5,
+                        levelLoadingTimeOut: 20000,
+                        levelLoadingMaxRetry: 5,
+                        fragLoadingTimeOut: 25000,
+                        fragLoadingMaxRetry: 5,
                         startPosition: initTime > 0 ? initTime : -1
                     });
                     hlsInstance = hls;
