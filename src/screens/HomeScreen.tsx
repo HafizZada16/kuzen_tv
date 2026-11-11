@@ -7,9 +7,10 @@ import {
   fetchOngoingDonghua,
   MediaItem,
 } from '../services/mediaService';
+import { fetchDiscoverMovies } from '../services/movieService';
 import { TVHeroBanner } from '../components/TVHeroBanner';
 import { TVMediaRow } from '../components/TVMediaRow';
-import { Flame, Sparkles, Film } from 'lucide-react-native';
+import { Flame, Sparkles, Film, Tv } from 'lucide-react-native';
 
 interface HomeScreenProps {
   onSelectItem: (item: MediaItem) => void;
@@ -20,23 +21,31 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectItem }) => {
   const [ongoingAnime, setOngoingAnime] = useState<MediaItem[]>([]);
   const [popularDonghua, setPopularDonghua] = useState<MediaItem[]>([]);
   const [ongoingDonghua, setOngoingDonghua] = useState<MediaItem[]>([]);
+  const [popularMovies, setPopularMovies] = useState<MediaItem[]>([]);
+  const [actionMovies, setActionMovies] = useState<MediaItem[]>([]);
   const [featuredItem, setFeaturedItem] = useState<MediaItem | null>(null);
 
   useEffect(() => {
     async function loadData() {
       try {
-        const [anime, popDonghua, onDonghua] = await Promise.all([
+        const [anime, popDonghua, onDonghua, popMovies, actMovies] = await Promise.all([
           fetchOngoingAnime(1),
           fetchPopularDonghua(1),
           fetchOngoingDonghua(1),
+          fetchDiscoverMovies(1, '', 'popularity.desc'),
+          fetchDiscoverMovies(1, '28', 'popularity.desc'),
         ]);
 
         setOngoingAnime(anime);
         setPopularDonghua(popDonghua);
         setOngoingDonghua(onDonghua);
+        setPopularMovies(popMovies);
+        setActionMovies(actMovies);
 
         if (anime.length > 0) {
           setFeaturedItem(anime[0]);
+        } else if (popMovies.length > 0) {
+          setFeaturedItem(popMovies[0]);
         } else if (popDonghua.length > 0) {
           setFeaturedItem(popDonghua[0]);
         }
@@ -70,7 +79,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectItem }) => {
         onDetailPress={onSelectItem}
       />
 
-      {/* Row 1: Anime Ongoing */}
+      {/* Row 1: Film Bioskop Populer */}
+      {popularMovies.length > 0 && (
+        <TVMediaRow
+          title="Film Bioskop Populer (FrameX)"
+          icon={<Film size={20} color={Colors.primary} />}
+          items={popularMovies}
+          onSelectItem={onSelectItem}
+        />
+      )}
+
+      {/* Row 2: Anime Ongoing */}
       <TVMediaRow
         title="Anime Terbaru (Otakudesu)"
         icon={<Flame size={20} color={Colors.primary} />}
@@ -78,7 +97,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectItem }) => {
         onSelectItem={onSelectItem}
       />
 
-      {/* Row 2: Donghua Populer */}
+      {/* Row 3: Film Aksi & Bioskop Pilihan */}
+      {actionMovies.length > 0 && (
+        <TVMediaRow
+          title="Film Aksi Pilihan (FrameX)"
+          icon={<Tv size={20} color={Colors.primary} />}
+          items={actionMovies}
+          onSelectItem={onSelectItem}
+        />
+      )}
+
+      {/* Row 4: Donghua Populer */}
       <TVMediaRow
         title="Donghua Populer (Anichin)"
         icon={<Sparkles size={20} color={Colors.primary} />}
@@ -86,7 +115,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectItem }) => {
         onSelectItem={onSelectItem}
       />
 
-      {/* Row 3: Donghua Ongoing */}
+      {/* Row 5: Donghua Ongoing */}
       <TVMediaRow
         title="Donghua Terbaru (Anichin)"
         icon={<Film size={20} color={Colors.primary} />}
