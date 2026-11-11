@@ -13,4 +13,7 @@ Please refer to [AGENTS.md](./AGENTS.md) for the complete list of rules.
 4. **ANDROID TV FOCUS INTEGRITY**:
    - Keep drawer unmounted when closed (`{isDrawerOpen && <Drawer>}`).
    - Maintain crisp `#FFFFFF` TV outlines and 100% remote D-pad navigability.
+5. **STRICT SCOPE INTEGRITY (ONLY MODIFY REQUESTED FILES)**:
+   - Only edit the specific file(s) requested by the user.
+   - Never proactively modify sister/unrelated files without explicit user consent.
 

@@ -146,6 +146,7 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
   const drawerScrollViewRef = useRef<ScrollView | null>(null);
   const osdTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const centerToastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const drawerScrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const drawerSlideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const playerActiveRef = useRef<boolean>(true);
 
@@ -363,6 +364,7 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
     }
     return () => {
       if (osdTimeoutRef.current) clearTimeout(osdTimeoutRef.current);
+      if (drawerScrollTimeoutRef.current) clearTimeout(drawerScrollTimeoutRef.current);
     };
   }, [isOsdVisible, resetOsdTimer]);
 
@@ -588,6 +590,26 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
     [episodeSlug, normSource, closeDrawer, showCenterToast, selectSubtitle]
   );
 
+  const scrollToDrawerCard = useCallback((idx: number, isEpisode: boolean, animated: boolean = true) => {
+    const itemWidth = isEpisode ? 170 : 200;
+    const stride = itemWidth + 14;
+    const targetX = Math.max(0, idx * stride - (SCREEN_WIDTH / 2 - itemWidth / 2 - 40));
+
+    if (drawerScrollTimeoutRef.current) {
+      clearTimeout(drawerScrollTimeoutRef.current);
+    }
+    if (!animated) {
+      drawerScrollViewRef.current?.scrollTo({ x: targetX, animated: false });
+      return;
+    }
+    drawerScrollTimeoutRef.current = setTimeout(() => {
+      drawerScrollViewRef.current?.scrollTo({
+        x: targetX,
+        animated: true,
+      });
+    }, 20);
+  }, []);
+
   const openDrawer = useCallback((tab: 'episodes' | 'servers' | 'subtitles' = 'episodes') => {
     setDrawerTab(tab);
     drawerTabRef.current = tab;
@@ -617,13 +639,10 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
       friction: 8,
     }).start(() => {
       setTimeout(() => {
-        drawerScrollViewRef.current?.scrollTo({
-          x: Math.max(0, initIdx * (tab === 'episodes' ? 144 : 164) - 100),
-          animated: true,
-        });
-      }, 60);
+        scrollToDrawerCard(initIdx, tab === 'episodes', false);
+      }, 50);
     });
-  }, [episodeSlug, drawerSlideAnim]);
+  }, [episodeSlug, drawerSlideAnim, scrollToDrawerCard]);
 
   // Handle hardware Back button on TV remote
   useEffect(() => {
@@ -712,26 +731,18 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
           : watchDataRef.current?.servers || [];
         if (items.length === 0) return;
 
-        const cardWidth = isEps ? 144 : 164;
-
         if (keyCode === 21) { // DPAD_LEFT
           const next = Math.max(0, drawerIndexRef.current - 1);
           setDrawerIndex(next);
           drawerIndexRef.current = next;
-          drawerScrollViewRef.current?.scrollTo({
-            x: Math.max(0, next * cardWidth - 100),
-            animated: true,
-          });
+          scrollToDrawerCard(next, isEps, true);
           return;
         }
         if (keyCode === 22) { // DPAD_RIGHT
           const next = Math.min(items.length - 1, drawerIndexRef.current + 1);
           setDrawerIndex(next);
           drawerIndexRef.current = next;
-          drawerScrollViewRef.current?.scrollTo({
-            x: Math.max(0, next * cardWidth - 100),
-            animated: true,
-          });
+          scrollToDrawerCard(next, isEps, true);
           return;
         }
         if (keyCode === 23 || keyCode === 66 || keyCode === 160 || keyCode === 62) { // DPAD_CENTER / ENTER / SPACE -> Select Item
@@ -895,6 +906,7 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
     handleSeek,
     openDrawer,
     closeDrawer,
+    scrollToDrawerCard,
     resetOsdTimer,
     showCenterToast,
     onEpisodeChange,
@@ -1085,7 +1097,10 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
 
       {/* Subtitle High-Contrast Overlay for TV */}
       {currentCueText ? (
-        <View style={styles.subtitleContainer} pointerEvents="none">
+        <View
+          style={[styles.subtitleContainer, { bottom: isOsdVisible ? 135 : 55 }]}
+          pointerEvents="none"
+        >
           <View style={styles.subtitlePill}>
             <Text style={styles.subtitleText}>{currentCueText.replace(/<[^>]+>/g, '')}</Text>
           </View>
@@ -1502,6 +1517,7 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
             ref={drawerScrollViewRef}
             horizontal
             showsHorizontalScrollIndicator={false}
+            removeClippedSubviews={false}
             contentContainerStyle={styles.drawerScrollList}
           >
             {drawerTab === 'episodes' ? (
@@ -2077,7 +2093,7 @@ const styles = StyleSheet.create({
   },
   subtitleContainer: {
     position: 'absolute',
-    bottom: 85,
+    bottom: 55,
     left: 40,
     right: 40,
     alignItems: 'center',
@@ -2085,22 +2101,19 @@ const styles = StyleSheet.create({
     zIndex: 50,
   },
   subtitlePill: {
-    backgroundColor: 'rgba(0, 0, 0, 0.82)',
-    paddingHorizontal: 22,
-    paddingVertical: 10,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
-    maxWidth: '85%',
+    backgroundColor: 'transparent',
+    paddingHorizontal: 16,
+    paddingVertical: 2,
+    maxWidth: '90%',
   },
   subtitleText: {
-    color: '#FFFF55',
-    fontSize: 22,
-    fontWeight: '800',
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
     textAlign: 'center',
-    letterSpacing: 0.5,
+    letterSpacing: 0.3,
     textShadowColor: '#000000',
-    textShadowOffset: { width: 2, height: 2 },
-    textShadowRadius: 4,
+    textShadowOffset: { width: 1.5, height: 1.5 },
+    textShadowRadius: 3,
   },
 });

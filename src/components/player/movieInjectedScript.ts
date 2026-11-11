@@ -82,9 +82,37 @@ export function buildMovieInjectedScript(options: MovieScriptOptions = {}): stri
       setInterval(applyHideStyle, 1000);
 
       var capturedVideo = null;
+      window.__QUETTA_USER_WANTS_PAUSED__ = false;
+      window.__quetta_allow_pause__ = false;
       var userWantsPaused = false;
       var hasStartedPlayback = false;
       var fallbackMetaDuration = ${fallbackMetaDuration};
+
+      try {
+        if (!window.__movie_play_guard_installed__) {
+          window.__movie_play_guard_installed__ = true;
+          var origMediaPlay = HTMLMediaElement.prototype.play;
+          HTMLMediaElement.prototype.play = function() {
+            if (window.__QUETTA_USER_WANTS_PAUSED__) {
+              return Promise.reject(new Error('Playback paused by user'));
+            }
+            return origMediaPlay.apply(this, arguments);
+          };
+        }
+      } catch(e) {}
+
+      try {
+        if (!window.__movie_pause_guard_installed__) {
+          window.__movie_pause_guard_installed__ = true;
+          var origMediaPause = HTMLMediaElement.prototype.pause;
+          HTMLMediaElement.prototype.pause = function() {
+            if (!window.__QUETTA_USER_WANTS_PAUSED__ && hasStartedPlayback && !window.__quetta_allow_pause__) {
+              return;
+            }
+            return origMediaPause.apply(this, arguments);
+          };
+        }
+      } catch(e) {}
 
       function setupVideo(v) {
         if (!v || v.__movieBound) return;
@@ -94,6 +122,24 @@ export function buildMovieInjectedScript(options: MovieScriptOptions = {}): stri
         v.removeAttribute('controls');
         v.playsInline = true;
         v.preload = 'auto';
+
+        if (!v.__movie_instance_guarded__) {
+          v.__movie_instance_guarded__ = true;
+          var origVPlay = v.play;
+          v.play = function() {
+            if (window.__QUETTA_USER_WANTS_PAUSED__) {
+              return Promise.reject(new Error('Playback paused by user'));
+            }
+            return origVPlay.apply(this, arguments);
+          };
+          var origVPause = v.pause;
+          v.pause = function() {
+            if (!window.__QUETTA_USER_WANTS_PAUSED__ && hasStartedPlayback && !window.__quetta_allow_pause__) {
+              return;
+            }
+            return origVPause.apply(this, arguments);
+          };
+        }
 
         function sendReady() {
           var dur = (v.duration && isFinite(v.duration) && v.duration > 0) ? v.duration : fallbackMetaDuration;
@@ -118,13 +164,26 @@ export function buildMovieInjectedScript(options: MovieScriptOptions = {}): stri
           });
         });
         v.addEventListener('play', function() {
-          if (userWantsPaused) {
+          if (window.__QUETTA_USER_WANTS_PAUSED__) {
+            window.__quetta_allow_pause__ = true;
             try { v.pause(); } catch(e) {}
+            window.__quetta_allow_pause__ = false;
             return;
           }
           safePostMessage({ type: 'playstate', isPlaying: true });
         });
         v.addEventListener('pause', function() {
+          if (!window.__QUETTA_USER_WANTS_PAUSED__ && hasStartedPlayback && !window.__quetta_allow_pause__) {
+            try { v.play().catch(function(){}); } catch(e) {}
+            return;
+          }
+          safePostMessage({ type: 'playstate', isPlaying: false });
+        });
+        v.addEventListener('ended', function() {
+          window.__QUETTA_USER_WANTS_PAUSED__ = true;
+          window.__quetta_allow_pause__ = true;
+          try { v.pause(); } catch(e) {}
+          window.__quetta_allow_pause__ = false;
           safePostMessage({ type: 'playstate', isPlaying: false });
         });
         v.addEventListener('playing', function() {
@@ -149,6 +208,8 @@ export function buildMovieInjectedScript(options: MovieScriptOptions = {}): stri
       for (var i = 0; i < existingVids.length; i++) setupVideo(existingVids[i]);
 
       function doPause() {
+        window.__QUETTA_USER_WANTS_PAUSED__ = true;
+        window.__quetta_allow_pause__ = true;
         userWantsPaused = true;
         if (clickInterval) {
           clearInterval(clickInterval);
@@ -177,10 +238,13 @@ export function buildMovieInjectedScript(options: MovieScriptOptions = {}): stri
             } catch(e) {}
           }
         } catch(e) {}
+        window.__quetta_allow_pause__ = false;
         safePostMessage({ type: 'playstate', isPlaying: false });
       }
 
       function doPlay() {
+        window.__QUETTA_USER_WANTS_PAUSED__ = false;
+        window.__quetta_allow_pause__ = false;
         userWantsPaused = false;
         hasStartedPlayback = true;
         if (clickInterval) {

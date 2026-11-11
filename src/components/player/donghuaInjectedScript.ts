@@ -69,9 +69,36 @@ export function buildDonghuaInjectedScript(options: DonghuaScriptOptions = {}): 
       }
 
       var capturedVideo = null;
-      var userWantsPaused = false;
+      window.__QUETTA_USER_WANTS_PAUSED__ = false;
+      window.__quetta_allow_pause__ = false;
       var hasStartedPlayback = false;
       var fallbackMetaDuration = ${fallbackMetaDuration};
+
+      try {
+        if (!window.__donghua_play_guard_installed__) {
+          window.__donghua_play_guard_installed__ = true;
+          var origMediaPlay = HTMLMediaElement.prototype.play;
+          HTMLMediaElement.prototype.play = function() {
+            if (window.__QUETTA_USER_WANTS_PAUSED__) {
+              return Promise.reject(new Error('Playback paused by user'));
+            }
+            return origMediaPlay.apply(this, arguments);
+          };
+        }
+      } catch(e) {}
+
+      try {
+        if (!window.__donghua_pause_guard_installed__) {
+          window.__donghua_pause_guard_installed__ = true;
+          var origMediaPause = HTMLMediaElement.prototype.pause;
+          HTMLMediaElement.prototype.pause = function() {
+            if (!window.__QUETTA_USER_WANTS_PAUSED__ && hasStartedPlayback && !window.__quetta_allow_pause__) {
+              return;
+            }
+            return origMediaPause.apply(this, arguments);
+          };
+        }
+      } catch(e) {}
 
       function setupVideo(v) {
         if (!v || v.__donghuaBound) return;
@@ -82,6 +109,24 @@ export function buildDonghuaInjectedScript(options: DonghuaScriptOptions = {}): 
         v.playsInline = true;
         v.preload = 'auto';
         isolateVideo(v);
+
+        if (!v.__donghua_instance_guarded__) {
+          v.__donghua_instance_guarded__ = true;
+          var origVPlay = v.play;
+          v.play = function() {
+            if (window.__QUETTA_USER_WANTS_PAUSED__) {
+              return Promise.reject(new Error('Playback paused by user'));
+            }
+            return origVPlay.apply(this, arguments);
+          };
+          var origVPause = v.pause;
+          v.pause = function() {
+            if (!window.__QUETTA_USER_WANTS_PAUSED__ && hasStartedPlayback && !window.__quetta_allow_pause__) {
+              return;
+            }
+            return origVPause.apply(this, arguments);
+          };
+        }
 
         function sendReady() {
           var dur = (v.duration && isFinite(v.duration) && v.duration > 0) ? v.duration : fallbackMetaDuration;
@@ -107,13 +152,26 @@ export function buildDonghuaInjectedScript(options: DonghuaScriptOptions = {}): 
           }));
         });
         v.addEventListener('play', function() {
-          if (userWantsPaused) {
+          if (window.__QUETTA_USER_WANTS_PAUSED__) {
+            window.__quetta_allow_pause__ = true;
             try { v.pause(); } catch(e) {}
+            window.__quetta_allow_pause__ = false;
             return;
           }
           window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'playstate', isPlaying: true }));
         });
         v.addEventListener('pause', function() {
+          if (!window.__QUETTA_USER_WANTS_PAUSED__ && hasStartedPlayback && !window.__quetta_allow_pause__) {
+            try { v.play().catch(function(){}); } catch(e) {}
+            return;
+          }
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'playstate', isPlaying: false }));
+        });
+        v.addEventListener('ended', function() {
+          window.__QUETTA_USER_WANTS_PAUSED__ = true;
+          window.__quetta_allow_pause__ = true;
+          try { v.pause(); } catch(e) {}
+          window.__quetta_allow_pause__ = false;
           window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'playstate', isPlaying: false }));
         });
         v.addEventListener('waiting', function() {
@@ -144,24 +202,38 @@ export function buildDonghuaInjectedScript(options: DonghuaScriptOptions = {}): 
           if (vs.length > 0) setupVideo(vs[0]);
         }
         if (action === 'PLAY') {
-          userWantsPaused = false;
+          window.__QUETTA_USER_WANTS_PAUSED__ = false;
+          window.__quetta_allow_pause__ = false;
+          hasStartedPlayback = true;
           if (capturedVideo) capturedVideo.play().catch(function(){});
           if (window.playerjs && typeof window.playerjs.api === 'function') {
             try { window.playerjs.api('play'); } catch(e) {}
           }
         } else if (action === 'PAUSE') {
-          userWantsPaused = true;
+          window.__QUETTA_USER_WANTS_PAUSED__ = true;
+          window.__quetta_allow_pause__ = true;
           if (capturedVideo) capturedVideo.pause();
           if (window.playerjs && typeof window.playerjs.api === 'function') {
             try { window.playerjs.api('pause'); } catch(e) {}
           }
+          window.__quetta_allow_pause__ = false;
         } else if (action === 'TOGGLE') {
-          if (userWantsPaused || (capturedVideo && capturedVideo.paused)) {
-            userWantsPaused = false;
+          if (window.__QUETTA_USER_WANTS_PAUSED__ || (capturedVideo && capturedVideo.paused)) {
+            window.__QUETTA_USER_WANTS_PAUSED__ = false;
+            window.__quetta_allow_pause__ = false;
+            hasStartedPlayback = true;
             if (capturedVideo) capturedVideo.play().catch(function(){});
+            if (window.playerjs && typeof window.playerjs.api === 'function') {
+              try { window.playerjs.api('play'); } catch(e) {}
+            }
           } else {
-            userWantsPaused = true;
+            window.__QUETTA_USER_WANTS_PAUSED__ = true;
+            window.__quetta_allow_pause__ = true;
             if (capturedVideo) capturedVideo.pause();
+            if (window.playerjs && typeof window.playerjs.api === 'function') {
+              try { window.playerjs.api('pause'); } catch(e) {}
+            }
+            window.__quetta_allow_pause__ = false;
           }
         } else if (action === 'SEEK' && typeof val === 'number') {
           if (capturedVideo) capturedVideo.currentTime = val;

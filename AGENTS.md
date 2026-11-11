@@ -23,3 +23,8 @@
 - **WebView Isolation**: Streaming `<WebView>` elements must always be rendered with `focusable={false}` and wrapped in a container with `pointerEvents="none"` so that the web page never steals remote key events from the native Android TV OSD.
 - **Clean Label Formatting**: Episode buttons and badges must strictly follow concise antislop labels (e.g., `"Episode 5"` via `extractEpisodeNumber`), never raw redundant titles like `"Episode 05 Subtitle Indonesia"`.
 
+## 5. STRICT SCOPE INTEGRITY (ONLY MODIFY REQUESTED FILES)
+- **Strictly Confine File Modifications**: The AI assistant MUST ONLY modify the specific file(s), component(s), or feature(s) explicitly requested by the user.
+- **No Unsolicited / Proactive Edits**: The AI MUST NEVER proactively edit, refactor, or "fix" other sister files, unmentioned modules, or unrelated scripts (e.g., modifying Donghua/Movie scripts when only Anime was requested) without explicit user instructions.
+- **Propose First for External Files**: If the AI discovers bugs, inconsistencies, or potential improvements in files outside the requested scope, it MUST explain the finding in chat and ask for the user's consent before touching those files.
+

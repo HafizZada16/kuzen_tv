@@ -71,6 +71,7 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
             var initTime = ${initTime > 0 ? initTime : 0};
             var hlsInstance = null;
             var userWantsPaused = false;
+            var allowPause = false;
 
             // Intercept rogue .play() calls when user paused
             var origPlay = video.play;
@@ -79,6 +80,14 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
                     return Promise.reject(new Error('User paused playback'));
                 }
                 return origPlay.apply(this, arguments);
+            };
+
+            var origPause = video.pause;
+            video.pause = function() {
+                if (!userWantsPaused && !allowPause) {
+                    return;
+                }
+                return origPause.apply(this, arguments);
             };
 
             function postMsg(data) {
@@ -104,7 +113,9 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
                         });
                     } else if (action === 'PAUSE') {
                         userWantsPaused = true;
+                        allowPause = true;
                         video.pause();
+                        allowPause = false;
                         postMsg({
                             type: 'playstate',
                             isPlaying: false
@@ -112,6 +123,7 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
                     } else if (action === 'TOGGLE') {
                         if (userWantsPaused || video.paused) {
                             userWantsPaused = false;
+                            allowPause = false;
                             if (hlsInstance) {
                                 try { hlsInstance.startLoad(); } catch(e) {}
                             }
@@ -122,7 +134,9 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
                             });
                         } else {
                             userWantsPaused = true;
+                            allowPause = true;
                             video.pause();
+                            allowPause = false;
                             postMsg({
                                 type: 'playstate',
                                 isPlaying: false
@@ -206,6 +220,10 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
             });
 
             video.addEventListener('pause', function() {
+                if (!userWantsPaused && !allowPause) {
+                    try { video.play().catch(function() {}); } catch(e) {}
+                    return;
+                }
                 postMsg({
                     type: 'playstate',
                     isPlaying: false
@@ -302,8 +320,8 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
                                 }
                             }
                             if (targetLevel !== -1) {
-                                hls.currentLevel = targetLevel;
-                                hls.loadLevel = targetLevel;
+                                hls.autoLevelCapping = targetLevel;
+                                hls.currentLevel = -1; // Keep Auto ABR active so decoder can adapt without crashing
                             }
 
                             var parsedLevels = data.levels.map(function(lvl, idx) {
@@ -317,7 +335,7 @@ export function buildHlsPlayerHtml(options: HlsPlayerTemplateOptions): string {
                             postMsg({
                                 type: 'hls_levels',
                                 levels: parsedLevels,
-                                currentLevel: targetLevel
+                                currentLevel: -1
                             });
                         }
 

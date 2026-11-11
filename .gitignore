@@ -13,4 +13,5 @@ npm-debug.*
 web-build/
 .env*
 !.env.example
-
+GEMINI.md
+AGENTS.md

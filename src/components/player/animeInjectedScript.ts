@@ -223,23 +223,40 @@ export function buildAnimeInjectedScript(options: AnimeScriptOptions = {}): stri
       } catch (e) {}
 
       var capturedVideo = null;
+      window.__QUETTA_USER_WANTS_PAUSED__ = false;
+      window.__quetta_allow_pause__ = false;
       var userWantsPaused = false;
       var hasStartedPlayback = false;
       var fallbackMetaDuration = ${fallbackMetaDuration};
       window.__QUETTA_INITIAL_RESUMED__ = false;
       window.__QUETTA_RESUME_TIMER__ = null;
 
-      // Bulletproof Play Guard: When user explicitly pauses, intercept and reject ANY rogue
-      // third-party embed script or internal timer attempting to force HTMLMediaElement.play()
+      // Bulletproof Play & Pause Guards: Intercept and reject ANY rogue third-party
+      // embed script or ad timer attempting to force HTMLMediaElement.play() when paused,
+      // or calling HTMLMediaElement.pause() when user wants playback active.
       try {
         if (!window.__quetta_play_guard_installed__) {
           window.__quetta_play_guard_installed__ = true;
           var origMediaPlay = HTMLMediaElement.prototype.play;
           HTMLMediaElement.prototype.play = function() {
-            if (userWantsPaused) {
+            if (window.__QUETTA_USER_WANTS_PAUSED__) {
               return Promise.reject(new Error('Playback paused by user'));
             }
             return origMediaPlay.apply(this, arguments);
+          };
+        }
+      } catch(e) {}
+
+      try {
+        if (!window.__quetta_pause_guard_installed__) {
+          window.__quetta_pause_guard_installed__ = true;
+          var origMediaPause = HTMLMediaElement.prototype.pause;
+          HTMLMediaElement.prototype.pause = function() {
+            if (!window.__QUETTA_USER_WANTS_PAUSED__ && hasStartedPlayback && !window.__quetta_allow_pause__) {
+              // Reject rogue programmatic pause by 3rd-party embed scripts while user is playing
+              return;
+            }
+            return origMediaPause.apply(this, arguments);
           };
         }
       } catch(e) {}
@@ -395,15 +412,27 @@ export function buildAnimeInjectedScript(options: AnimeScriptOptions = {}): stri
         v.setAttribute('webkit-playsinline', '');
         isolateVideo(v);
 
-        // Instance play guard
+        // Instance play & pause guards
         if (!v.__quetta_instance_play_guarded__) {
           v.__quetta_instance_play_guarded__ = true;
           var origVPlay = v.play;
           v.play = function() {
-            if (userWantsPaused) {
+            if (window.__QUETTA_USER_WANTS_PAUSED__) {
               return Promise.reject(new Error('Playback paused by user'));
             }
             return origVPlay.apply(this, arguments);
+          };
+        }
+
+        if (!v.__quetta_instance_pause_guarded__) {
+          v.__quetta_instance_pause_guarded__ = true;
+          var origVPause = v.pause;
+          v.pause = function() {
+            if (!window.__QUETTA_USER_WANTS_PAUSED__ && hasStartedPlayback && !window.__quetta_allow_pause__) {
+              // Block rogue pause while user wants active playback
+              return;
+            }
+            return origVPause.apply(this, arguments);
           };
         }
 
@@ -477,16 +506,20 @@ export function buildAnimeInjectedScript(options: AnimeScriptOptions = {}): stri
           }));
         });
         v.addEventListener('play', function() {
-          if (userWantsPaused) {
+          if (window.__QUETTA_USER_WANTS_PAUSED__) {
+            window.__quetta_allow_pause__ = true;
             try { v.pause(); } catch(e) {}
+            window.__quetta_allow_pause__ = false;
             return;
           }
           isolateVideo(v);
           window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'playstate', isPlaying: true }));
         });
         v.addEventListener('playing', function() {
-          if (userWantsPaused) {
+          if (window.__QUETTA_USER_WANTS_PAUSED__) {
+            window.__quetta_allow_pause__ = true;
             try { v.pause(); } catch(e) {}
+            window.__quetta_allow_pause__ = false;
             return;
           }
           hasStartedPlayback = true;
@@ -496,10 +529,19 @@ export function buildAnimeInjectedScript(options: AnimeScriptOptions = {}): stri
           window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'buffering', isBuffering: false }));
         });
         v.addEventListener('pause', function() {
+          if (!window.__QUETTA_USER_WANTS_PAUSED__ && hasStartedPlayback && !window.__quetta_allow_pause__) {
+            // Intercept rogue pause by third-party embed scripts: auto-recover immediately
+            try { v.play().catch(function(){}); } catch(e) {}
+            return;
+          }
           isolateVideo(v);
           window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'playstate', isPlaying: false }));
         });
         v.addEventListener('ended', function() {
+          window.__QUETTA_USER_WANTS_PAUSED__ = true;
+          window.__quetta_allow_pause__ = true;
+          try { v.pause(); } catch(e) {}
+          window.__quetta_allow_pause__ = false;
           isolateVideo(v);
           window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'playstate', isPlaying: false }));
         });
@@ -680,6 +722,8 @@ export function buildAnimeInjectedScript(options: AnimeScriptOptions = {}): stri
 
       // Unified Pause Action: Pauses native video AND all known 3rd-party web players
       function doPause() {
+        window.__QUETTA_USER_WANTS_PAUSED__ = true;
+        window.__quetta_allow_pause__ = true;
         userWantsPaused = true;
         if (clickInterval) {
           clearInterval(clickInterval);
@@ -707,8 +751,7 @@ export function buildAnimeInjectedScript(options: AnimeScriptOptions = {}): stri
           // PlayerJS (Odstream, StreamHide, VidHide, Desustream)
           if (window.playerjs && typeof window.playerjs.api === 'function') {
             try { window.playerjs.api('pause'); } catch(e) {}
-          }
-          if (window.pljssglobal && Array.isArray(window.pljssglobal)) {
+          } else if (window.pljssglobal && Array.isArray(window.pljssglobal)) {
             window.pljssglobal.forEach(function(p) {
               if (p && typeof p.api === 'function') try { p.api('pause'); } catch(e) {}
             });
@@ -743,6 +786,7 @@ export function buildAnimeInjectedScript(options: AnimeScriptOptions = {}): stri
           }
         } catch(e) {}
 
+        window.__quetta_allow_pause__ = false;
         try {
           window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'playstate', isPlaying: false }));
         } catch(e) {}
@@ -750,6 +794,8 @@ export function buildAnimeInjectedScript(options: AnimeScriptOptions = {}): stri
 
       // Unified Play Action: Resumes native video AND all known 3rd-party web players
       function doPlay() {
+        window.__QUETTA_USER_WANTS_PAUSED__ = false;
+        window.__quetta_allow_pause__ = false;
         userWantsPaused = false;
         hasStartedPlayback = true;
         if (clickInterval) {
@@ -758,28 +804,30 @@ export function buildAnimeInjectedScript(options: AnimeScriptOptions = {}): stri
         }
 
         if (capturedVideo) {
-          capturedVideo.play().then(function() {
-            isolateVideo(capturedVideo);
-            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'playstate', isPlaying: true }));
-            if (!window.__QUETTA_INITIAL_RESUMED__ && ${ctxTime} > 2) {
-              try {
-                if (typeof capturedVideo.fastSeek === 'function') {
-                  capturedVideo.fastSeek(${ctxTime});
-                } else {
-                  capturedVideo.currentTime = ${ctxTime};
-                }
-              } catch(e) {}
-              triggerMegaSeek(${ctxTime});
-            }
-          }).catch(function(){});
+          try {
+            capturedVideo.play().then(function() {
+              isolateVideo(capturedVideo);
+              window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'playstate', isPlaying: true }));
+              if (!window.__QUETTA_INITIAL_RESUMED__ && ${ctxTime} > 2) {
+                window.__QUETTA_INITIAL_RESUMED__ = true;
+                try {
+                  if (typeof capturedVideo.fastSeek === 'function') {
+                    capturedVideo.fastSeek(${ctxTime});
+                  } else {
+                    capturedVideo.currentTime = ${ctxTime};
+                  }
+                } catch(e) {}
+                triggerMegaSeek(${ctxTime});
+              }
+            }).catch(function(){});
+          } catch(e) {}
         }
 
-        // Also trigger 3rd party engines
+        // Also trigger 3rd party engines safely
         try {
           if (window.playerjs && typeof window.playerjs.api === 'function') {
             try { window.playerjs.api('play'); } catch(e) {}
-          }
-          if (window.pljssglobal && Array.isArray(window.pljssglobal)) {
+          } else if (window.pljssglobal && Array.isArray(window.pljssglobal)) {
             window.pljssglobal.forEach(function(p) {
               if (p && typeof p.api === 'function') try { p.api('play'); } catch(e) {}
             });
@@ -837,7 +885,7 @@ export function buildAnimeInjectedScript(options: AnimeScriptOptions = {}): stri
           doPause();
           return;
         } else if (action === 'TOGGLE') {
-          if (userWantsPaused || (capturedVideo && capturedVideo.paused)) {
+          if (window.__QUETTA_USER_WANTS_PAUSED__ || (capturedVideo && capturedVideo.paused)) {
             doPlay();
           } else {
             doPause();
@@ -970,7 +1018,7 @@ export function buildAnimeInjectedScript(options: AnimeScriptOptions = {}): stri
       // 3. Background Auto-Clicker & Initializer
       var clickAttempts = 0;
       var clickInterval = setInterval(function() {
-        if (userWantsPaused || hasStartedPlayback) {
+        if (window.__QUETTA_USER_WANTS_PAUSED__ || hasStartedPlayback) {
           clearInterval(clickInterval);
           clickInterval = null;
           return;
@@ -989,14 +1037,13 @@ export function buildAnimeInjectedScript(options: AnimeScriptOptions = {}): stri
         }
 
         triggerMegaPlay();
-        if (userWantsPaused) return;
+        if (window.__QUETTA_USER_WANTS_PAUSED__) return;
 
         // Trigger PlayerJS / JWPlayer / VideoJS APIs directly
         try {
           if (window.playerjs && typeof window.playerjs.api === 'function') {
             window.playerjs.api('play');
-          }
-          if (window.pljssglobal && Array.isArray(window.pljssglobal)) {
+          } else if (window.pljssglobal && Array.isArray(window.pljssglobal)) {
             window.pljssglobal.forEach(function(p) {
               if (p && typeof p.api === 'function') {
                 try { p.api('play'); } catch(e) {}
@@ -1041,7 +1088,7 @@ export function buildAnimeInjectedScript(options: AnimeScriptOptions = {}): stri
         }
 
         // Only try initial play if playback has not started and user has not asked to pause
-        if (!userWantsPaused && !hasStartedPlayback) {
+        if (!window.__QUETTA_USER_WANTS_PAUSED__ && !hasStartedPlayback) {
           try {
             var vids = document.getElementsByTagName('video');
             for (var v = 0; v < vids.length; v++) {
@@ -1116,7 +1163,7 @@ export function buildAnimeInjectedScript(options: AnimeScriptOptions = {}): stri
       var isWatchdogBuffering = false;
       setInterval(function() {
         if (!capturedVideo) return;
-        if (!capturedVideo.paused && !capturedVideo.ended && !capturedVideo.seeking && !userWantsPaused) {
+        if (!capturedVideo.paused && !capturedVideo.ended && !capturedVideo.seeking && !window.__QUETTA_USER_WANTS_PAUSED__) {
           var ct = capturedVideo.currentTime;
           // If video is supposed to play but currentTime is completely frozen for >= 1.2s
           if (ct === lastPlayTime) {
