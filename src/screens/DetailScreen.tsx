@@ -17,6 +17,7 @@ import {
   fetchAnimeDetail,
   fetchDonghuaDetail,
 } from '../services/mediaService';
+import { fetchMovieDetail } from '../services/movieService';
 import { ArrowLeft, Play, Star, Calendar, CheckCircle, Tag } from 'lucide-react-native';
 
 interface DetailScreenProps {
@@ -88,6 +89,8 @@ export const DetailScreen: React.FC<DetailScreenProps> = ({
         let res: AnimeDetail;
         if (item.type === 'donghua') {
           res = await fetchDonghuaDetail(item.slug);
+        } else if (item.type === 'movie') {
+          res = await fetchMovieDetail(item.slug);
         } else {
           res = await fetchAnimeDetail(item.slug);
         }
@@ -147,7 +150,7 @@ export const DetailScreen: React.FC<DetailScreenProps> = ({
           <View style={styles.metaRow}>
             <View style={styles.typeBadge}>
               <Text style={styles.typeBadgeText}>
-                {item.type === 'donghua' ? 'DONGHUA' : 'ANIME'}
+                {item.type === 'donghua' ? 'DONGHUA' : item.type === 'movie' ? 'FILM BIOSKOP' : 'ANIME'}
               </Text>
             </View>
 
@@ -216,7 +219,7 @@ export const DetailScreen: React.FC<DetailScreenProps> = ({
                   focusedBtn === 'play-primary' && styles.primaryPlayButtonTextFocused,
                 ]}
               >
-                Mulai Nonton ({extractEpisodeNumber(firstEpisode.title, 0)})
+                {item.type === 'movie' ? 'Tonton Film Sekarang' : `Mulai Nonton (${extractEpisodeNumber(firstEpisode.title, 0)})`}
               </Text>
             </Pressable>
           )}
@@ -226,9 +229,11 @@ export const DetailScreen: React.FC<DetailScreenProps> = ({
       {/* Episodes Rail Section (Netflix TV Style) */}
       <View style={styles.episodesSection}>
         <View style={styles.episodesHeaderRow}>
-          <Text style={styles.episodesSectionTitle}>Daftar Episode</Text>
+          <Text style={styles.episodesSectionTitle}>
+            {item.type === 'movie' ? 'Pilihan Tayangan' : 'Daftar Episode'}
+          </Text>
           <Text style={styles.episodesTotalLabel}>
-            {loading ? 'Memuat episode...' : `${episodes.length} Episode Tersedia`}
+            {loading ? 'Memuat...' : item.type === 'movie' ? 'Film Penuh' : `${episodes.length} Episode Tersedia`}
           </Text>
         </View>
 

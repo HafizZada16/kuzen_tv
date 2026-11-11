@@ -11,11 +11,12 @@ import {
   Home,
   Flame,
   Tv,
+  Film,
   History as HistoryIcon,
   Settings,
 } from 'lucide-react-native';
 
-export type NavTabId = 'home' | 'anime' | 'donghua' | 'history' | 'settings';
+export type NavTabId = 'home' | 'anime' | 'donghua' | 'movies' | 'history' | 'settings';
 
 interface TVSidebarProps {
   activeTab: NavTabId;
@@ -35,6 +36,7 @@ const NAV_ITEMS: NavItemDef[] = [
   { id: 'home', label: 'Beranda', icon: Home },
   { id: 'anime', label: 'Anime', icon: Flame },
   { id: 'donghua', label: 'Donghua', icon: Tv },
+  { id: 'movies', label: 'Film', icon: Film },
   { id: 'history', label: 'Riwayat', icon: HistoryIcon },
   { id: 'settings', label: 'Pengaturan', icon: Settings },
 ];

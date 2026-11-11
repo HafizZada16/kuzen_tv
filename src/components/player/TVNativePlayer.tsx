@@ -23,6 +23,7 @@ import {
   WatchResponse,
   ServerItem,
 } from '../../services/mediaService';
+import { fetchMovieWatch } from '../../services/movieService';
 import {
   addHistory,
   fetchHistoryBySlug,
@@ -81,7 +82,7 @@ interface TVNativePlayerProps {
   episodeSlug: string;
   episodeTitle: string;
   episodes?: { title: string; slug: string }[];
-  source: 'anime' | 'donghua' | 'otakudesu' | 'anichin';
+  source: 'anime' | 'donghua' | 'otakudesu' | 'anichin' | 'movie';
   onClose: () => void;
   onEpisodeChange?: (newEpisodeSlug: string, newEpisodeTitle: string) => void;
 }
@@ -173,8 +174,12 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
   currentServerRef.current = currentServer;
 
   // Normalize source name
-  const normSource: 'otakudesu' | 'anichin' =
-    source === 'donghua' || source === 'anichin' ? 'anichin' : 'otakudesu';
+  const normSource: 'otakudesu' | 'anichin' | 'movie' =
+    source === 'movie'
+      ? 'movie'
+      : source === 'donghua' || source === 'anichin'
+      ? 'anichin'
+      : 'otakudesu';
 
   // --- 1. Load Watch Data & Initial History ---
   useEffect(() => {
@@ -183,7 +188,9 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
       setLoading(true);
       try {
         let data: WatchResponse;
-        if (normSource === 'anichin') {
+        if (normSource === 'movie') {
+          data = await fetchMovieWatch(episodeSlug);
+        } else if (normSource === 'anichin') {
           data = await fetchDonghuaWatch(episodeSlug);
         } else {
           data = await fetchAnimeWatch(episodeSlug);
@@ -195,20 +202,24 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
         if (initialEpisodes && initialEpisodes.length > 0) {
           data.episodes = initialEpisodes;
         } else if (!data.episodes || data.episodes.length === 0) {
-          try {
-            if (normSource === 'anichin') {
-              const d = await fetchDonghuaDetail(animeSlug);
-              if (d?.episodes && d.episodes.length > 0) {
-                data.episodes = d.episodes;
+          if (normSource === 'movie') {
+            data.episodes = [{ title: 'Tonton Film Lengkap', slug: episodeSlug }];
+          } else {
+            try {
+              if (normSource === 'anichin') {
+                const d = await fetchDonghuaDetail(animeSlug);
+                if (d?.episodes && d.episodes.length > 0) {
+                  data.episodes = d.episodes;
+                }
+              } else {
+                const d = getCachedAnimeDetail(animeSlug) || await fetchAnimeDetail(animeSlug);
+                if (d?.episodes && d.episodes.length > 0) {
+                  data.episodes = d.episodes;
+                }
               }
-            } else {
-              const d = getCachedAnimeDetail(animeSlug) || await fetchAnimeDetail(animeSlug);
-              if (d?.episodes && d.episodes.length > 0) {
-                data.episodes = d.episodes;
-              }
+            } catch (e) {
+              console.warn('Fallback episodes error in TV player:', e);
             }
-          } catch (e) {
-            console.warn('Fallback episodes error in TV player:', e);
           }
         }
 

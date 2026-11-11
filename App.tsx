@@ -5,10 +5,11 @@ import {
   StatusBar,
 } from 'react-native';
 import { Colors } from './src/constants/Colors';
-import { TVSidebar, NavTabId, COLLAPSED_WIDTH, EXPANDED_WIDTH } from './src/components/TVSidebar';
+import { TVSidebar, NavTabId, COLLAPSED_WIDTH } from './src/components/TVSidebar';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { AnimeScreen } from './src/screens/AnimeScreen';
 import { DonghuaScreen } from './src/screens/DonghuaScreen';
+import { MovieScreen } from './src/screens/MovieScreen';
 import { HistoryScreen } from './src/screens/HistoryScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { DetailScreen } from './src/screens/DetailScreen';
@@ -24,7 +25,6 @@ interface ActiveEpisodeState {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<NavTabId>('home');
-  const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<MediaItem | null>(null);
   const [activePlayback, setActivePlayback] = useState<ActiveEpisodeState | null>(null);
 
@@ -84,6 +84,8 @@ export default function App() {
         return <AnimeScreen onSelectItem={handleSelectMedia} />;
       case 'donghua':
         return <DonghuaScreen onSelectItem={handleSelectMedia} />;
+      case 'movies':
+        return <MovieScreen onSelectItem={handleSelectMedia} />;
       case 'history':
         return <HistoryScreen onSelectHistory={handleSelectHistory} />;
       case 'settings':
@@ -107,11 +109,6 @@ export default function App() {
         {renderActiveScreen()}
       </View>
 
-      {/* Dimming Backdrop overlay when Sidebar is expanded (YouTube TV style) */}
-      {!activePlayback && isSidebarExpanded && (
-        <View pointerEvents="none" style={styles.dimmingOverlay} />
-      )}
-
       {/* YouTube TV Collapsible Floating Sidebar Rail */}
       {!activePlayback && (
         <TVSidebar
@@ -120,7 +117,6 @@ export default function App() {
             setSelectedMedia(null);
             setActiveTab(tab);
           }}
-          onExpandedChange={setIsSidebarExpanded}
         />
       )}
 
@@ -133,7 +129,13 @@ export default function App() {
           episodeSlug={activePlayback.episode.slug}
           episodeTitle={activePlayback.episode.title}
           episodes={activePlayback.episodes}
-          source={activePlayback.media.type === 'donghua' ? 'anichin' : 'otakudesu'}
+          source={
+            activePlayback.media.type === 'donghua'
+              ? 'anichin'
+              : activePlayback.media.type === 'movie'
+              ? 'movie'
+              : 'otakudesu'
+          }
           onClose={() => setActivePlayback(null)}
           onEpisodeChange={handleEpisodeChange}
         />
@@ -152,14 +154,5 @@ const styles = StyleSheet.create({
     paddingTop: 24,
     paddingRight: 36,
     paddingLeft: COLLAPSED_WIDTH + 24, // 72px rail + 24px margin
-  },
-  dimmingOverlay: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    left: EXPANDED_WIDTH,
-    right: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.65)',
-    zIndex: 90,
   },
 });
