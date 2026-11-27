@@ -80,35 +80,35 @@ fun HomeScreen(
             }
         } else {
             LazyColumn(
-                contentPadding = PaddingValues(top = 20.dp, bottom = 36.dp),
-                verticalArrangement = Arrangement.spacedBy(22.dp),
+                contentPadding = PaddingValues(top = 14.dp, bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
                 items(sections, key = { it.title }) { section ->
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp)
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .width(4.dp)
-                                    .height(18.dp)
+                                    .width(3.dp)
+                                    .height(15.dp)
                                     .clip(RoundedCornerShape(2.dp))
                                     .background(AccentPrimary)
                             )
-                            Spacer(modifier = Modifier.width(10.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = section.title,
                                 color = TextPrimary,
-                                fontSize = 18.sp,
+                                fontSize = 15.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
 
                         LazyRow(
-                            contentPadding = PaddingValues(horizontal = 28.dp, vertical = 6.dp),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp),
+                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             items(section.items, key = { "${section.title}-${it.type}-${it.slug}" }) { item ->

@@ -81,12 +81,12 @@ fun DetailScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 36.dp, vertical = 24.dp)
                         .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 24.dp, vertical = 20.dp)
                 ) {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.padding(bottom = 18.dp)
+                        modifier = Modifier.padding(top = 4.dp, bottom = 18.dp)
                     ) {
                         Button(
                             onClick = onBack,
@@ -97,7 +97,8 @@ fun DetailScreen(
                                     border = BorderStroke(2.5.dp, FocusBorderColor),
                                     shape = RoundedCornerShape(8.dp)
                                 )
-                            )
+                            ),
+                            scale = ButtonDefaults.scale(focusedScale = 1.05f)
                         ) {
                             Text(text = "← Kembali", color = TextPrimary, fontSize = 13.sp)
                         }
@@ -110,11 +111,11 @@ fun DetailScreen(
                                 colors = ButtonDefaults.colors(containerColor = AccentPrimary, focusedContainerColor = AccentPrimary),
                                 border = ButtonDefaults.border(
                                     focusedBorder = Border(
-                                        border = BorderStroke(3.dp, FocusBorderColor),
+                                        border = BorderStroke(2.5.dp, FocusBorderColor),
                                         shape = RoundedCornerShape(8.dp)
                                     )
                                 ),
-                                scale = ButtonDefaults.scale(focusedScale = 1.06f)
+                                scale = ButtonDefaults.scale(focusedScale = 1.05f)
                             ) {
                                 Text(
                                     text = if (mediaItem.type == "movie") "▶ Tonton Film" else "▶ Mulai Menonton",
@@ -136,55 +137,55 @@ fun DetailScreen(
                             contentDescription = d.title,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
-                                .width(175.dp)
-                                .height(255.dp)
-                                .clip(RoundedCornerShape(12.dp))
+                                .width(140.dp)
+                                .height(200.dp)
+                                .clip(RoundedCornerShape(10.dp))
                                 .background(SurfaceCard)
                         )
 
-                        Spacer(modifier = Modifier.width(24.dp))
+                        Spacer(modifier = Modifier.width(18.dp))
 
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = d.title.ifBlank { mediaItem.title },
                                 color = TextPrimary,
-                                fontSize = 24.sp,
+                                fontSize = 20.sp,
                                 fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(bottom = 8.dp)
+                                modifier = Modifier.padding(bottom = 6.dp)
                             )
 
                             Row(
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                modifier = Modifier.padding(bottom = 10.dp)
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.padding(bottom = 8.dp)
                             ) {
                                 if (d.rating.isNotBlank() && d.rating != "N/A") {
                                     Text(
                                         text = "★ ${d.rating}",
                                         color = BadgeRating,
-                                        fontSize = 14.sp,
+                                        fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold
                                     )
                                 }
                                 Text(
                                     text = "Status: ${d.status}",
                                     color = TextSecondary,
-                                    fontSize = 14.sp
+                                    fontSize = 12.sp
                                 )
                             }
 
                             if (d.genres.isNotEmpty()) {
                                 Row(
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    modifier = Modifier.padding(bottom = 12.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.padding(bottom = 8.dp)
                                 ) {
                                     d.genres.take(5).forEach { g ->
                                         Box(
                                             modifier = Modifier
-                                                .clip(RoundedCornerShape(6.dp))
+                                                .clip(RoundedCornerShape(5.dp))
                                                 .background(SurfaceCard)
-                                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                                                .padding(horizontal = 8.dp, vertical = 3.dp)
                                         ) {
-                                            Text(text = g, color = TextSecondary, fontSize = 12.sp)
+                                            Text(text = g, color = TextSecondary, fontSize = 11.sp)
                                         }
                                     }
                                 }
@@ -193,9 +194,9 @@ fun DetailScreen(
                             Text(
                                 text = d.synopsis,
                                 color = TextSecondary,
-                                fontSize = 13.sp,
-                                lineHeight = 19.sp,
-                                maxLines = 6
+                                fontSize = 12.sp,
+                                lineHeight = 17.sp,
+                                maxLines = 5
                             )
                         }
                     }
@@ -210,7 +211,7 @@ fun DetailScreen(
 
                     LazyRow(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        contentPadding = PaddingValues(bottom = 16.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         itemsIndexed(d.episodes) { idx, ep ->
@@ -221,11 +222,11 @@ fun DetailScreen(
                             }
                             Button(
                                 onClick = { onPlayEpisode(ep, d.episodes) },
-                                shape = ButtonDefaults.shape(RoundedCornerShape(8.dp)),
+                                shape = ButtonDefaults.shape(RoundedCornerShape(7.dp)),
                                 border = ButtonDefaults.border(
                                     focusedBorder = Border(
-                                        border = BorderStroke(2.5.dp, FocusBorderColor),
-                                        shape = RoundedCornerShape(8.dp)
+                                        border = BorderStroke(2.dp, FocusBorderColor),
+                                        shape = RoundedCornerShape(7.dp)
                                     )
                                 ),
                                 colors = ButtonDefaults.colors(
@@ -233,12 +234,13 @@ fun DetailScreen(
                                     focusedContainerColor = AccentPrimary
                                 ),
                                 scale = ButtonDefaults.scale(focusedScale = 1.07f),
-                                modifier = Modifier.height(46.dp)
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                modifier = Modifier.height(38.dp)
                             ) {
                                 Text(
                                     text = epLabel,
                                     color = TextPrimary,
-                                    fontSize = 13.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }

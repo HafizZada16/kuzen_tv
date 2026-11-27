@@ -10,11 +10,22 @@ import kotlinx.serialization.json.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.URLEncoder
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 object MediaRepository {
     private const val BASE_API = "https://kuzen.web.id/api"
     private const val BASE_ORIGIN = "https://kuzen.web.id"
+
+    private const val CATALOG_TTL_MS = 3 * 60 * 1000L
+    private const val DETAIL_TTL_MS = 10 * 60 * 1000L
+    private const val WATCH_TTL_MS = 5 * 60 * 1000L
+
+    private data class CacheEntry<T>(val data: T, val timestamp: Long)
+
+    private val catalogCache = ConcurrentHashMap<String, CacheEntry<List<MediaItem>>>()
+    private val detailCache = ConcurrentHashMap<String, CacheEntry<AnimeDetail>>()
+    private val watchCache = ConcurrentHashMap<String, CacheEntry<WatchResponse>>()
 
     val MOVIE_PROVIDERS = listOf(
         MovieProviderOption("executioner", "Executioner I", "FHD"),
@@ -199,9 +210,28 @@ object MediaRepository {
                 // Retry on transient error
             }
             attempt++
-            if (attempt <= 2) delay(attempt * 1000L)
+            if (attempt <= 2) delay(attempt * 1200L) // Neon DB cold-start backoff
         }
         null
+    }
+
+    private suspend inline fun <T> cachedFetch(
+        cache: ConcurrentHashMap<String, CacheEntry<T>>,
+        key: String,
+        ttlMs: Long,
+        isValid: (T) -> Boolean = { true },
+        crossinline loader: suspend () -> T?
+    ): T? {
+        val now = System.currentTimeMillis()
+        cache[key]?.let { entry ->
+            if (now - entry.timestamp <= ttlMs) return entry.data
+            cache.remove(key)
+        }
+        val loaded = loader() ?: return null
+        if (isValid(loaded)) {
+            cache[key] = CacheEntry(loaded, System.currentTimeMillis())
+        }
+        return loaded
     }
 
     private suspend fun getJson(path: String): JsonElement? {
@@ -254,37 +284,39 @@ object MediaRepository {
 
     // --- 1. ANIME (Otakudesu) ---
 
-    suspend fun getOngoingAnime(page: Int = 1): List<MediaItem> {
-        val root = getJson("/public/api/otakudesu/ongoing?page=$page")
-        return extractDataArray(root).mapNotNull { el ->
-            val obj = el as? JsonObject ?: return@mapNotNull null
-            val title = obj.str("title") ?: return@mapNotNull null
-            val slug = obj.str("slug") ?: return@mapNotNull null
-            MediaItem(
-                title = cleanTitle(title),
-                slug = slug,
-                thumb = resolveMediaUrl(obj.str("thumb")),
-                status = obj.str("episode", "status"),
-                type = "anime"
-            )
-        }
-    }
+    suspend fun getOngoingAnime(page: Int = 1): List<MediaItem> =
+        cachedFetch(catalogCache, "anime:ongoing:$page", CATALOG_TTL_MS, { it.isNotEmpty() }) {
+            val root = getJson("/public/api/otakudesu/ongoing?page=$page")
+            extractDataArray(root).mapNotNull { el ->
+                val obj = el as? JsonObject ?: return@mapNotNull null
+                val title = obj.str("title") ?: return@mapNotNull null
+                val slug = obj.str("slug") ?: return@mapNotNull null
+                MediaItem(
+                    title = cleanTitle(title),
+                    slug = slug,
+                    thumb = resolveMediaUrl(obj.str("thumb")),
+                    status = obj.str("episode", "status"),
+                    type = "anime"
+                )
+            }
+        } ?: emptyList()
 
-    suspend fun getCompletedAnime(page: Int = 1): List<MediaItem> {
-        val root = getJson("/public/api/otakudesu/complete?page=$page")
-        return extractDataArray(root).mapNotNull { el ->
-            val obj = el as? JsonObject ?: return@mapNotNull null
-            val title = obj.str("title") ?: return@mapNotNull null
-            val slug = obj.str("slug") ?: return@mapNotNull null
-            MediaItem(
-                title = cleanTitle(title),
-                slug = slug,
-                thumb = resolveMediaUrl(obj.str("thumb")),
-                status = obj.str("episode", "status") ?: "Completed",
-                type = "anime"
-            )
-        }
-    }
+    suspend fun getCompletedAnime(page: Int = 1): List<MediaItem> =
+        cachedFetch(catalogCache, "anime:complete:$page", CATALOG_TTL_MS, { it.isNotEmpty() }) {
+            val root = getJson("/public/api/otakudesu/complete?page=$page")
+            extractDataArray(root).mapNotNull { el ->
+                val obj = el as? JsonObject ?: return@mapNotNull null
+                val title = obj.str("title") ?: return@mapNotNull null
+                val slug = obj.str("slug") ?: return@mapNotNull null
+                MediaItem(
+                    title = cleanTitle(title),
+                    slug = slug,
+                    thumb = resolveMediaUrl(obj.str("thumb")),
+                    status = obj.str("episode", "status") ?: "Completed",
+                    type = "anime"
+                )
+            }
+        } ?: emptyList()
 
     suspend fun searchAnime(query: String): List<MediaItem> {
         if (query.isBlank()) return emptyList()
@@ -304,76 +336,78 @@ object MediaRepository {
         }
     }
 
-    suspend fun getAnimeDetail(slug: String): AnimeDetail? {
-        val root = (getJson("/detail/$slug") as? JsonObject) ?: return null
-        val raw = (root["data"] as? JsonObject) ?: root
-        val infoObj = raw["info"] as? JsonObject
-        val genreStr = infoObj?.str("Genre") ?: ""
-        val genres = genreStr.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-        val infoMap = infoObj?.entries?.mapNotNull { (k, v) ->
-            (v as? JsonPrimitive)?.contentOrNull?.let { k to it }
-        }?.toMap() ?: emptyMap()
+    suspend fun getAnimeDetail(slug: String): AnimeDetail? =
+        cachedFetch(detailCache, "anime:$slug", DETAIL_TTL_MS) {
+            val root = (getJson("/detail/$slug") as? JsonObject) ?: return@cachedFetch null
+            val raw = (root["data"] as? JsonObject) ?: root
+            val infoObj = raw["info"] as? JsonObject
+            val genreStr = infoObj?.str("Genre") ?: ""
+            val genres = genreStr.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            val infoMap = infoObj?.entries?.mapNotNull { (k, v) ->
+                (v as? JsonPrimitive)?.contentOrNull?.let { k to it }
+            }?.toMap() ?: emptyMap()
 
-        return AnimeDetail(
-            title = cleanTitle(raw.str("title") ?: ""),
-            thumb = resolveMediaUrl(raw.str("thumb")),
-            synopsis = raw.str("synopsis") ?: "Tidak ada sinopsis tersedia.",
-            rating = infoObj?.str("Skor") ?: raw.str("rating") ?: "",
-            status = infoObj?.str("Status") ?: raw.str("status") ?: "Ongoing",
-            genres = genres,
-            info = infoMap,
-            episodes = parseEpisodes(raw)
-        )
-    }
-
-    suspend fun getAnimeWatch(episodeSlug: String): WatchResponse? {
-        val root = (getJson("/watch/$episodeSlug") as? JsonObject) ?: return null
-        val raw = (root["data"] as? JsonObject) ?: root
-        val rawServers = (raw["serverList"] as? JsonArray) ?: (raw["mirror_embed"] as? JsonArray) ?: JsonArray(emptyList())
-        val firstServerUrl = (rawServers.firstOrNull() as? JsonObject)?.str("url", "sturl") ?: ""
-        val defaultUrl = raw.str("iframe", "sturl", "url") ?: firstServerUrl
-
-        var episodes = parseEpisodes(raw)
-        val seriesSlug = raw.str("slug") ?: episodeSlug.split("-episode-").firstOrNull().orEmpty()
-        if (episodes.isEmpty() && seriesSlug.isNotBlank()) {
-            episodes = getAnimeDetail(seriesSlug)?.episodes
-                ?: getAnimeDetail("$seriesSlug-sub-indo")?.episodes
-                ?: emptyList()
-        }
-
-        val mappedServers = rawServers.mapNotNull { s ->
-            val obj = s as? JsonObject ?: return@mapNotNull null
-            val wrapped = wrapAnimeStreamUrl(obj.str("url", "sturl") ?: "")
-            if (wrapped.isBlank()) return@mapNotNull null
-            var label = obj.str("serverName", "title", "name") ?: "Server"
-            if (isShortlinkOrBlocked(label, wrapped)) return@mapNotNull null
-            val q = obj.str("quality", "resolution") ?: ""
-            if (q.isNotBlank() && !label.contains(q, ignoreCase = true)) {
-                label = "$label ($q)"
-            }
-            ServerItem(
-                label = label,
-                url = wrapped,
-                quality = q.ifBlank { null },
-                isHls = wrapped.contains(".m3u8", ignoreCase = true)
+            AnimeDetail(
+                title = cleanTitle(raw.str("title") ?: ""),
+                thumb = resolveMediaUrl(raw.str("thumb")),
+                synopsis = raw.str("synopsis") ?: "Tidak ada sinopsis tersedia.",
+                rating = infoObj?.str("Skor") ?: raw.str("rating") ?: "",
+                status = infoObj?.str("Status") ?: raw.str("status") ?: "Ongoing",
+                genres = genres,
+                info = infoMap,
+                episodes = parseEpisodes(raw)
             )
-        }.sortedBy { getServerPriority(it.label, it.url) }
-
-        val wrappedDefault = wrapAnimeStreamUrl(defaultUrl)
-        val finalStreamUrl = if (wrappedDefault.isNotBlank() && !wrappedDefault.contains("filedon", ignoreCase = true)) {
-            wrappedDefault
-        } else {
-            mappedServers.firstOrNull()?.url ?: ""
         }
 
-        return WatchResponse(
-            title = cleanTitle(raw.str("title") ?: ""),
-            streamUrl = finalStreamUrl,
-            animeSlug = seriesSlug.ifBlank { null },
-            servers = mappedServers,
-            episodes = episodes
-        )
-    }
+    suspend fun getAnimeWatch(episodeSlug: String): WatchResponse? =
+        cachedFetch(watchCache, "anime:$episodeSlug", WATCH_TTL_MS, { it.servers.isNotEmpty() || it.streamUrl.isNotBlank() }) {
+            val root = (getJson("/watch/$episodeSlug") as? JsonObject) ?: return@cachedFetch null
+            val raw = (root["data"] as? JsonObject) ?: root
+            val rawServers = (raw["serverList"] as? JsonArray) ?: (raw["mirror_embed"] as? JsonArray) ?: JsonArray(emptyList())
+            val firstServerUrl = (rawServers.firstOrNull() as? JsonObject)?.str("url", "sturl") ?: ""
+            val defaultUrl = raw.str("iframe", "sturl", "url") ?: firstServerUrl
+
+            var episodes = parseEpisodes(raw)
+            val seriesSlug = raw.str("slug") ?: episodeSlug.split("-episode-").firstOrNull().orEmpty()
+            if (episodes.isEmpty() && seriesSlug.isNotBlank()) {
+                episodes = getAnimeDetail(seriesSlug)?.episodes
+                    ?: getAnimeDetail("$seriesSlug-sub-indo")?.episodes
+                    ?: emptyList()
+            }
+
+            val mappedServers = rawServers.mapNotNull { s ->
+                val obj = s as? JsonObject ?: return@mapNotNull null
+                val wrapped = wrapAnimeStreamUrl(obj.str("url", "sturl") ?: "")
+                if (wrapped.isBlank()) return@mapNotNull null
+                var label = obj.str("serverName", "title", "name") ?: "Server"
+                if (isShortlinkOrBlocked(label, wrapped)) return@mapNotNull null
+                val q = obj.str("quality", "resolution") ?: ""
+                if (q.isNotBlank() && !label.contains(q, ignoreCase = true)) {
+                    label = "$label ($q)"
+                }
+                ServerItem(
+                    label = label,
+                    url = wrapped,
+                    quality = q.ifBlank { null },
+                    isHls = wrapped.contains(".m3u8", ignoreCase = true)
+                )
+            }.sortedBy { getServerPriority(it.label, it.url) }
+
+            val wrappedDefault = wrapAnimeStreamUrl(defaultUrl)
+            val finalStreamUrl = if (wrappedDefault.isNotBlank() && !wrappedDefault.contains("filedon", ignoreCase = true)) {
+                wrappedDefault
+            } else {
+                mappedServers.firstOrNull()?.url ?: ""
+            }
+
+            WatchResponse(
+                title = cleanTitle(raw.str("title") ?: ""),
+                streamUrl = finalStreamUrl,
+                animeSlug = seriesSlug.ifBlank { null },
+                servers = mappedServers,
+                episodes = episodes
+            )
+        }
 
     // --- 2. DONGHUA (Anichin) ---
 
@@ -398,20 +432,23 @@ object MediaRepository {
         )
     }
 
-    suspend fun getPopularDonghua(page: Int = 1): List<MediaItem> {
-        val root = getJson("/anichin/popular?page=$page")
-        return extractDataArray(root).mapNotNull { (it as? JsonObject)?.let { o -> cleanDonghuaItem(o) } }
-    }
+    suspend fun getPopularDonghua(page: Int = 1): List<MediaItem> =
+        cachedFetch(catalogCache, "donghua:popular:$page", CATALOG_TTL_MS, { it.isNotEmpty() }) {
+            val root = getJson("/anichin/popular?page=$page")
+            extractDataArray(root).mapNotNull { (it as? JsonObject)?.let { o -> cleanDonghuaItem(o) } }
+        } ?: emptyList()
 
-    suspend fun getOngoingDonghua(page: Int = 1): List<MediaItem> {
-        val root = getJson("/anichin/ongoing?page=$page")
-        return extractDataArray(root).mapNotNull { (it as? JsonObject)?.let { o -> cleanDonghuaItem(o, "Ongoing") } }
-    }
+    suspend fun getOngoingDonghua(page: Int = 1): List<MediaItem> =
+        cachedFetch(catalogCache, "donghua:ongoing:$page", CATALOG_TTL_MS, { it.isNotEmpty() }) {
+            val root = getJson("/anichin/ongoing?page=$page")
+            extractDataArray(root).mapNotNull { (it as? JsonObject)?.let { o -> cleanDonghuaItem(o, "Ongoing") } }
+        } ?: emptyList()
 
-    suspend fun getCompletedDonghua(page: Int = 1): List<MediaItem> {
-        val root = getJson("/anichin/completed?page=$page")
-        return extractDataArray(root).mapNotNull { (it as? JsonObject)?.let { o -> cleanDonghuaItem(o, "Completed") } }
-    }
+    suspend fun getCompletedDonghua(page: Int = 1): List<MediaItem> =
+        cachedFetch(catalogCache, "donghua:completed:$page", CATALOG_TTL_MS, { it.isNotEmpty() }) {
+            val root = getJson("/anichin/completed?page=$page")
+            extractDataArray(root).mapNotNull { (it as? JsonObject)?.let { o -> cleanDonghuaItem(o, "Completed") } }
+        } ?: emptyList()
 
     suspend fun searchDonghua(query: String): List<MediaItem> {
         if (query.isBlank()) return emptyList()
@@ -420,194 +457,196 @@ object MediaRepository {
         return extractDataArray(root).mapNotNull { (it as? JsonObject)?.let { o -> cleanDonghuaItem(o) } }
     }
 
-    suspend fun getDonghuaDetail(slug: String): AnimeDetail? {
-        val cleanSeriesSlug = slug.replace(Regex("""-episode-\d+.*$""", RegexOption.IGNORE_CASE), "")
-        var root = getJson("/anichin/detail/$cleanSeriesSlug") as? JsonObject
-        var raw = (root?.get("data") as? JsonObject) ?: root
-        var episodes = raw?.let { parseEpisodes(it) } ?: emptyList()
+    suspend fun getDonghuaDetail(slug: String): AnimeDetail? =
+        cachedFetch(detailCache, "donghua:$slug", DETAIL_TTL_MS) {
+            val cleanSeriesSlug = slug.replace(Regex("""-episode-\d+.*$""", RegexOption.IGNORE_CASE), "")
+            var root = getJson("/anichin/detail/$cleanSeriesSlug") as? JsonObject
+            var raw = (root?.get("data") as? JsonObject) ?: root
+            var episodes = raw?.let { parseEpisodes(it) } ?: emptyList()
 
-        if ((raw == null || episodes.isEmpty()) && slug.contains("-episode-")) {
-            val watchRoot = getJson("/anichin/watch/$slug") as? JsonObject
-            val watchRaw = (watchRoot?.get("data") as? JsonObject) ?: watchRoot
-            val resolvedSlug = watchRaw?.str("anime_slug", "series_slug")
-                ?: watchRaw?.str("slug")?.takeIf { !it.contains("-episode-") }
-            if (!resolvedSlug.isNullOrBlank() && resolvedSlug != cleanSeriesSlug) {
-                val res2 = getJson("/anichin/detail/$resolvedSlug") as? JsonObject
-                val raw2 = (res2?.get("data") as? JsonObject) ?: res2
-                val eps2 = raw2?.let { parseEpisodes(it) } ?: emptyList()
-                if (eps2.isNotEmpty()) {
-                    raw = raw2
-                    episodes = eps2
+            if ((raw == null || episodes.isEmpty()) && slug.contains("-episode-")) {
+                val watchRoot = getJson("/anichin/watch/$slug") as? JsonObject
+                val watchRaw = (watchRoot?.get("data") as? JsonObject) ?: watchRoot
+                val resolvedSlug = watchRaw?.str("anime_slug", "series_slug")
+                    ?: watchRaw?.str("slug")?.takeIf { !it.contains("-episode-") }
+                if (!resolvedSlug.isNullOrBlank() && resolvedSlug != cleanSeriesSlug) {
+                    val res2 = getJson("/anichin/detail/$resolvedSlug") as? JsonObject
+                    val raw2 = (res2?.get("data") as? JsonObject) ?: res2
+                    val eps2 = raw2?.let { parseEpisodes(it) } ?: emptyList()
+                    if (eps2.isNotEmpty()) {
+                        raw = raw2
+                        episodes = eps2
+                    }
                 }
-            }
-            if (episodes.isEmpty() && watchRaw != null) {
-                val watchEps = parseEpisodes(watchRaw)
-                if (watchEps.isNotEmpty()) {
-                    if (raw == null) raw = watchRaw
-                    episodes = watchEps
-                }
-            }
-        }
-
-        if (raw == null && cleanSeriesSlug != slug) {
-            root = getJson("/anichin/detail/$slug") as? JsonObject
-            raw = (root?.get("data") as? JsonObject) ?: root
-            episodes = raw?.let { parseEpisodes(it) } ?: emptyList()
-        }
-
-        val finalRaw = raw ?: return null
-        val infoObj = finalRaw["info"] as? JsonObject
-        val genreArr = (finalRaw["genres"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull } ?: emptyList()
-        val genreStr = infoObj?.str("Genre", "Genres") ?: ""
-        val genres = if (genreArr.isNotEmpty()) genreArr else genreStr.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-        val infoMap = infoObj?.entries?.mapNotNull { (k, v) ->
-            (v as? JsonPrimitive)?.contentOrNull?.let { k to it }
-        }?.toMap() ?: emptyMap()
-
-        var title = finalRaw.str("title") ?: ""
-        if (Regex("""(?:episode|eps|ep)\.?\s*\d+""", RegexOption.IGNORE_CASE).containsMatchIn(title)) {
-            title = cleanTitle(title.replace(Regex("""\s*(?:episode|eps|ep)\.?\s*\d+.*$""", RegexOption.IGNORE_CASE), ""))
-                .ifBlank { title }
-        }
-
-        return AnimeDetail(
-            title = title,
-            thumb = resolveMediaUrl(finalRaw.str("thumb", "thumbnail")),
-            synopsis = finalRaw.str("synopsis", "sinopsis") ?: "Tidak ada sinopsis tersedia.",
-            rating = infoObj?.str("Skor", "Score") ?: finalRaw.str("rating") ?: "",
-            status = infoObj?.str("Status") ?: finalRaw.str("status") ?: "Ongoing",
-            genres = genres,
-            info = infoMap,
-            episodes = episodes
-        )
-    }
-
-    suspend fun getDonghuaWatch(slug: String): WatchResponse? {
-        var root = getJson("/anichin/watch/$slug") as? JsonObject ?: return null
-        var raw = (root["data"] as? JsonObject) ?: root
-
-        val hasInitServers = ((raw["players"] as? JsonArray) ?: (raw["serverList"] as? JsonArray) ?: (raw["mirror_embed"] as? JsonArray))?.isNotEmpty() == true
-        val hasInitStream = raw.str("stream_url", "embed_url", "iframe", "url", "kurama_stream") != null || root["kurama_stream"] != null
-        if (!hasInitServers && !hasInitStream && !slug.contains("force=")) {
-            val forced = getJson("/anichin/watch/$slug?force=1") as? JsonObject
-            if (forced != null) {
-                root = forced
-                raw = (forced["data"] as? JsonObject) ?: forced
-            }
-        }
-
-        var episodes = parseEpisodes(raw)
-        val seriesSlug = raw.str("anime_slug", "series_slug")
-            ?: slug.replace(Regex("""-episode-\d+.*$""", RegexOption.IGNORE_CASE), "")
-        if (episodes.isEmpty() && seriesSlug.isNotBlank()) {
-            episodes = getDonghuaDetail(seriesSlug)?.episodes ?: emptyList()
-        }
-
-        val rawServerObjects = mutableListOf<JsonObject>()
-        ((raw["kurama_stream"] as? JsonObject) ?: (root["kurama_stream"] as? JsonObject))?.let { ks ->
-            if (ks.str("url", "sturl") != null) rawServerObjects.add(ks)
-        }
-        listOf("players", "serverList", "mirror_embed", "streams").forEach { key ->
-            (raw[key] as? JsonArray)?.forEach { el ->
-                val obj = el as? JsonObject ?: return@forEach
-                val u = obj.str("url", "sturl")?.trim() ?: return@forEach
-                if (rawServerObjects.none { it.str("url", "sturl")?.trim() == u }) {
-                    rawServerObjects.add(obj)
-                }
-            }
-        }
-
-        val allServers = mutableListOf<ServerItem>()
-        rawServerObjects.forEach { server ->
-            val name = server.str("provider", "title", "serverName", "name") ?: ""
-            var sUrl = (server.str("url", "sturl") ?: "").replace("&amp;", "&").trim()
-            if (sUrl.isBlank()) return@forEach
-
-            val nameLower = name.lowercase()
-            val urlLower = sUrl.lowercase()
-            if (nameLower.contains("solidfiles") || urlLower.contains("solidfiles.com")) return@forEach
-            if (nameLower.contains("zippyshare") || urlLower.contains("zippyshare.com")) return@forEach
-            if (nameLower.contains("acefile") || urlLower.contains("acefile")) return@forEach
-            if (nameLower.contains("all sub") || nameLower.contains("hardsub") || urlLower.contains("animexin")) return@forEach
-
-            var displayName = when {
-                nameLower == "default" -> when {
-                    urlLower.contains("ok.ru") || urlLower.contains("odnoklassniki") -> "OK.ru"
-                    urlLower.contains("dailymotion") || urlLower.contains("geo.dailymotion") -> "Dailymotion"
-                    else -> "Server Utama"
-                }
-                nameLower.contains("all sub player old") -> "Dailymotion"
-                urlLower.contains("ok.ru") || urlLower.contains("odnoklassniki") -> "OK.ru"
-                urlLower.contains("dailymotion") || urlLower.contains("geo.dailymotion") -> "Dailymotion"
-                urlLower.contains("1024terabox.com") || urlLower.contains("terabox") -> "Terabox"
-                urlLower.contains("linkbox") -> "Linkbox"
-                urlLower.contains("drive.google") || urlLower.contains("racaty") -> "Google Drive"
-                else -> name
-            }.replace(Regex("""\s*\[(?:ads|setting dns)\]""", RegexOption.IGNORE_CASE), "").trim()
-
-            if (sUrl.contains("dailymotion.com/embed/video/")) {
-                Regex("""video/([a-zA-Z0-9]+)""").find(sUrl)?.let { m ->
-                    sUrl = "https://geo.dailymotion.com/player/xhojl.html?video=${m.groupValues[1]}"
+                if (episodes.isEmpty() && watchRaw != null) {
+                    val watchEps = parseEpisodes(watchRaw)
+                    if (watchEps.isNotEmpty()) {
+                        if (raw == null) raw = watchRaw
+                        episodes = watchEps
+                    }
                 }
             }
 
-            if (isShortlinkOrBlocked(displayName, sUrl)) return@forEach
-
-            val q = server.str("quality", "resolution") ?: ""
-            if (q.isNotBlank() && !displayName.contains(q, ignoreCase = true)) {
-                displayName = "$displayName ($q)"
+            if (raw == null && cleanSeriesSlug != slug) {
+                root = getJson("/anichin/detail/$slug") as? JsonObject
+                raw = (root?.get("data") as? JsonObject) ?: root
+                episodes = raw?.let { parseEpisodes(it) } ?: emptyList()
             }
 
-            val isKurama = displayName.contains("kurama", ignoreCase = true) || sUrl.contains("kurama", ignoreCase = true)
-            val isHls = (server["isHls"] as? JsonPrimitive)?.booleanOrNull == true ||
-                server.str("type") == "hls" ||
-                sUrl.contains(".m3u8", ignoreCase = true) ||
-                isKurama
+            val finalRaw = raw ?: return@cachedFetch null
+            val infoObj = finalRaw["info"] as? JsonObject
+            val genreArr = (finalRaw["genres"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull } ?: emptyList()
+            val genreStr = infoObj?.str("Genre", "Genres") ?: ""
+            val genres = if (genreArr.isNotEmpty()) genreArr else genreStr.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            val infoMap = infoObj?.entries?.mapNotNull { (k, v) ->
+                (v as? JsonPrimitive)?.contentOrNull?.let { k to it }
+            }?.toMap() ?: emptyMap()
 
-            val wrappedUrl = wrapDonghuaStreamUrl(sUrl, isHls)
-            allServers.add(
-                ServerItem(
-                    label = displayName.ifBlank { "Server" },
-                    url = wrappedUrl,
-                    quality = q.ifBlank { null },
-                    isHls = isHls,
-                    badge = server.str("badge") ?: if (isHls) "HLS Cepat" else null
-                )
+            var title = finalRaw.str("title") ?: ""
+            if (Regex("""(?:episode|eps|ep)\.?\s*\d+""", RegexOption.IGNORE_CASE).containsMatchIn(title)) {
+                title = cleanTitle(title.replace(Regex("""\s*(?:episode|eps|ep)\.?\s*\d+.*$""", RegexOption.IGNORE_CASE), ""))
+                    .ifBlank { title }
+            }
+
+            AnimeDetail(
+                title = title,
+                thumb = resolveMediaUrl(finalRaw.str("thumb", "thumbnail")),
+                synopsis = finalRaw.str("synopsis", "sinopsis") ?: "Tidak ada sinopsis tersedia.",
+                rating = infoObj?.str("Skor", "Score") ?: finalRaw.str("rating") ?: "",
+                status = infoObj?.str("Status") ?: finalRaw.str("status") ?: "Ongoing",
+                genres = genres,
+                info = infoMap,
+                episodes = episodes
             )
         }
 
-        val rawStreamUrl = raw.str("stream_url", "embed_url", "iframe", "url")
-        if (!rawStreamUrl.isNullOrBlank()) {
-            val isKurama = rawStreamUrl.contains("kurama", ignoreCase = true)
-            val isHls = isKurama || rawStreamUrl.contains(".m3u8", ignoreCase = true)
-            val wrapped = wrapDonghuaStreamUrl(rawStreamUrl, isHls)
-            if (allServers.none { it.url == wrapped }) {
+    suspend fun getDonghuaWatch(slug: String): WatchResponse? =
+        cachedFetch(watchCache, "donghua:$slug", WATCH_TTL_MS, { it.servers.isNotEmpty() || it.streamUrl.isNotBlank() }) {
+            var root = getJson("/anichin/watch/$slug") as? JsonObject ?: return@cachedFetch null
+            var raw = (root["data"] as? JsonObject) ?: root
+
+            val hasInitServers = ((raw["players"] as? JsonArray) ?: (raw["serverList"] as? JsonArray) ?: (raw["mirror_embed"] as? JsonArray))?.isNotEmpty() == true
+            val hasInitStream = raw.str("stream_url", "embed_url", "iframe", "url", "kurama_stream") != null || root["kurama_stream"] != null
+            if (!hasInitServers && !hasInitStream && !slug.contains("force=")) {
+                val forced = getJson("/anichin/watch/$slug?force=1") as? JsonObject
+                if (forced != null) {
+                    root = forced
+                    raw = (forced["data"] as? JsonObject) ?: forced
+                }
+            }
+
+            var episodes = parseEpisodes(raw)
+            val seriesSlug = raw.str("anime_slug", "series_slug")
+                ?: slug.replace(Regex("""-episode-\d+.*$""", RegexOption.IGNORE_CASE), "")
+            if (episodes.isEmpty() && seriesSlug.isNotBlank()) {
+                episodes = getDonghuaDetail(seriesSlug)?.episodes ?: emptyList()
+            }
+
+            val rawServerObjects = mutableListOf<JsonObject>()
+            ((raw["kurama_stream"] as? JsonObject) ?: (root["kurama_stream"] as? JsonObject))?.let { ks ->
+                if (ks.str("url", "sturl") != null) rawServerObjects.add(ks)
+            }
+            listOf("players", "serverList", "mirror_embed", "streams").forEach { key ->
+                (raw[key] as? JsonArray)?.forEach { el ->
+                    val obj = el as? JsonObject ?: return@forEach
+                    val u = obj.str("url", "sturl")?.trim() ?: return@forEach
+                    if (rawServerObjects.none { it.str("url", "sturl")?.trim() == u }) {
+                        rawServerObjects.add(obj)
+                    }
+                }
+            }
+
+            val allServers = mutableListOf<ServerItem>()
+            rawServerObjects.forEach { server ->
+                val name = server.str("provider", "title", "serverName", "name") ?: ""
+                var sUrl = (server.str("url", "sturl") ?: "").replace("&amp;", "&").trim()
+                if (sUrl.isBlank()) return@forEach
+
+                val nameLower = name.lowercase()
+                val urlLower = sUrl.lowercase()
+                if (nameLower.contains("solidfiles") || urlLower.contains("solidfiles.com")) return@forEach
+                if (nameLower.contains("zippyshare") || urlLower.contains("zippyshare.com")) return@forEach
+                if (nameLower.contains("acefile") || urlLower.contains("acefile")) return@forEach
+                if (nameLower.contains("all sub") || nameLower.contains("hardsub") || urlLower.contains("animexin")) return@forEach
+
+                var displayName = when {
+                    nameLower == "default" -> when {
+                        urlLower.contains("ok.ru") || urlLower.contains("odnoklassniki") -> "OK.ru"
+                        urlLower.contains("dailymotion") || urlLower.contains("geo.dailymotion") -> "Dailymotion"
+                        else -> "Server Utama"
+                    }
+                    nameLower.contains("all sub player old") -> "Dailymotion"
+                    urlLower.contains("ok.ru") || urlLower.contains("odnoklassniki") -> "OK.ru"
+                    urlLower.contains("dailymotion") || urlLower.contains("geo.dailymotion") -> "Dailymotion"
+                    urlLower.contains("1024terabox.com") || urlLower.contains("terabox") -> "Terabox"
+                    urlLower.contains("linkbox") -> "Linkbox"
+                    urlLower.contains("drive.google") || urlLower.contains("racaty") -> "Google Drive"
+                    else -> name
+                }.replace(Regex("""\s*\[(?:ads|setting dns)\]""", RegexOption.IGNORE_CASE), "").trim()
+
+                if (sUrl.contains("dailymotion.com/embed/video/")) {
+                    Regex("""video/([a-zA-Z0-9]+)""").find(sUrl)?.let { m ->
+                        sUrl = "https://geo.dailymotion.com/player/xhojl.html?video=${m.groupValues[1]}"
+                    }
+                }
+
+                if (isShortlinkOrBlocked(displayName, sUrl)) return@forEach
+
+                val q = server.str("quality", "resolution") ?: ""
+                if (q.isNotBlank() && !displayName.contains(q, ignoreCase = true)) {
+                    displayName = "$displayName ($q)"
+                }
+
+                val isKurama = displayName.contains("kurama", ignoreCase = true) || sUrl.contains("kurama", ignoreCase = true)
+                val isHls = (server["isHls"] as? JsonPrimitive)?.booleanOrNull == true ||
+                    server.str("type") == "hls" ||
+                    sUrl.contains(".m3u8", ignoreCase = true) ||
+                    isKurama
+
+                val wrappedUrl = wrapDonghuaStreamUrl(sUrl, isHls)
                 allServers.add(
                     ServerItem(
-                        label = if (isKurama) "Kuramadrive (HLS)" else "Server Utama",
-                        url = wrapped,
+                        label = displayName.ifBlank { "Server" },
+                        url = wrappedUrl,
+                        quality = q.ifBlank { null },
                         isHls = isHls,
-                        badge = if (isHls) "HLS Cepat" else null
+                        badge = server.str("badge") ?: if (isHls) "HLS Cepat" else null
                     )
                 )
             }
+
+            val rawStreamUrl = raw.str("stream_url", "embed_url", "iframe", "url")
+            if (!rawStreamUrl.isNullOrBlank()) {
+                val isKurama = rawStreamUrl.contains("kurama", ignoreCase = true)
+                val isHls = isKurama || rawStreamUrl.contains(".m3u8", ignoreCase = true)
+                val wrapped = wrapDonghuaStreamUrl(rawStreamUrl, isHls)
+                if (allServers.none { it.url == wrapped }) {
+                    allServers.add(
+                        ServerItem(
+                            label = if (isKurama) "Kuramadrive (HLS)" else "Server Utama",
+                            url = wrapped,
+                            isHls = isHls,
+                            badge = if (isHls) "HLS Cepat" else null
+                        )
+                    )
+                }
+            }
+
+            val sortedServers = allServers.sortedBy { getServerPriority(it.label, it.url) }
+            val hybridObj = raw["hybrid"] as? JsonObject
+            val isHybridEligible = (hybridObj?.get("eligible") as? JsonPrimitive)?.booleanOrNull == true
+            val lazyEndpoint = hybridObj?.str("lazy_endpoint")
+
+            WatchResponse(
+                title = cleanTitle(raw.str("title") ?: ""),
+                streamUrl = sortedServers.firstOrNull()?.url ?: "",
+                animeSlug = seriesSlug.ifBlank { null },
+                servers = sortedServers,
+                episodes = episodes,
+                isHybrid = isHybridEligible,
+                lazyEndpoint = lazyEndpoint
+            )
         }
-
-        val sortedServers = allServers.sortedBy { getServerPriority(it.label, it.url) }
-        val hybridObj = raw["hybrid"] as? JsonObject
-        val isHybridEligible = (hybridObj?.get("eligible") as? JsonPrimitive)?.booleanOrNull == true
-        val lazyEndpoint = hybridObj?.str("lazy_endpoint")
-
-        return WatchResponse(
-            title = cleanTitle(raw.str("title") ?: ""),
-            streamUrl = sortedServers.firstOrNull()?.url ?: "",
-            animeSlug = seriesSlug.ifBlank { null },
-            servers = sortedServers,
-            episodes = episodes,
-            isHybrid = isHybridEligible,
-            lazyEndpoint = lazyEndpoint
-        )
-    }
 
     suspend fun fetchKuramanimeLazyStream(lazyEndpoint: String): ServerItem? {
         val cleanPath = if (lazyEndpoint.startsWith("/")) lazyEndpoint else "/$lazyEndpoint"
@@ -649,13 +688,14 @@ object MediaRepository {
         page: Int = 1,
         genre: String = "",
         sort: String = "popularity.desc"
-    ): List<MediaItem> {
-        val params = buildString {
-            append("/framextv/discover?type=movie&page=$page&sort=${URLEncoder.encode(sort, "UTF-8")}")
-            if (genre.isNotBlank()) append("&genre=${URLEncoder.encode(genre, "UTF-8")}")
-        }
-        return filterAndMapMovies(getJson(params))
-    }
+    ): List<MediaItem> =
+        cachedFetch(catalogCache, "movie:discover:$page:$genre:$sort", CATALOG_TTL_MS, { it.isNotEmpty() }) {
+            val params = buildString {
+                append("/framextv/discover?type=movie&page=$page&sort=${URLEncoder.encode(sort, "UTF-8")}")
+                if (genre.isNotBlank()) append("&genre=${URLEncoder.encode(genre, "UTF-8")}")
+            }
+            filterAndMapMovies(getJson(params))
+        } ?: emptyList()
 
     suspend fun searchMovies(query: String): List<MediaItem> {
         if (query.isBlank()) return emptyList()
@@ -663,105 +703,129 @@ object MediaRepository {
         return filterAndMapMovies(getJson("/framextv/search?q=$encoded"))
     }
 
-    suspend fun getMovieDetail(movieId: String): AnimeDetail = coroutineScope {
-        val watchDef = async { getJson("/framextv/watch/$movieId") as? JsonObject }
-        val searchDef = async { getJson("/framextv/search?q=${URLEncoder.encode(movieId, "UTF-8")}") }
+    suspend fun getMovieDetail(movieId: String): AnimeDetail =
+        cachedFetch(detailCache, "movie:$movieId", DETAIL_TTL_MS) {
+            coroutineScope {
+                val watchDef = async { getJson("/framextv/watch/$movieId") as? JsonObject }
+                val searchDef = async { getJson("/framextv/search?q=${URLEncoder.encode(movieId, "UTF-8")}") }
 
-        val watchData = watchDef.await()?.get("data") as? JsonObject
-        val searchMatch = extractDataArray(searchDef.await()).firstOrNull() as? JsonObject
+                val watchData = watchDef.await()?.get("data") as? JsonObject
+                val searchMatch = extractDataArray(searchDef.await()).firstOrNull() as? JsonObject
 
-        val title = watchData?.str("title") ?: searchMatch?.str("title") ?: "Film Bioskop"
-        val year = watchData?.str("year") ?: searchMatch?.str("year") ?: ""
-        val rating = watchData?.str("rating") ?: searchMatch?.str("rating") ?: "N/A"
-        val overview = watchData?.str("overview") ?: searchMatch?.str("overview") ?: "Sinopsis film tidak tersedia."
-        val thumb = resolveMediaUrl(
-            watchData?.str("poster") ?: searchMatch?.str("poster") ?: watchData?.str("backdrop") ?: searchMatch?.str("backdrop")
-        )
-        val rawGenres = (watchData?.get("genres") as? JsonArray) ?: (searchMatch?.get("genres") as? JsonArray)
-        val genres = rawGenres?.mapNotNull { g ->
-            when (g) {
-                is JsonPrimitive -> g.contentOrNull
-                is JsonObject -> g.str("name")
-                else -> null
+                val title = watchData?.str("title") ?: searchMatch?.str("title") ?: "Film Bioskop"
+                val year = watchData?.str("year") ?: searchMatch?.str("year") ?: ""
+                val rating = watchData?.str("rating") ?: searchMatch?.str("rating") ?: "N/A"
+                val overview = watchData?.str("overview") ?: searchMatch?.str("overview") ?: "Sinopsis film tidak tersedia."
+                val thumb = resolveMediaUrl(
+                    watchData?.str("poster") ?: searchMatch?.str("poster") ?: watchData?.str("backdrop") ?: searchMatch?.str("backdrop")
+                )
+                val rawGenres = (watchData?.get("genres") as? JsonArray) ?: (searchMatch?.get("genres") as? JsonArray)
+                val genres = rawGenres?.mapNotNull { g ->
+                    when (g) {
+                        is JsonPrimitive -> g.contentOrNull
+                        is JsonObject -> g.str("name")
+                        else -> null
+                    }
+                } ?: emptyList()
+
+                AnimeDetail(
+                    title = title,
+                    thumb = thumb,
+                    synopsis = overview,
+                    rating = rating,
+                    status = if (year.isNotBlank()) "$year • Film Bioskop" else "Film Bioskop",
+                    genres = genres,
+                    info = mapOf(
+                        "Tipe" to "Film Bioskop (Movie)",
+                        "Tahun" to year.ifBlank { "-" },
+                        "Status" to "Full Movie"
+                    ),
+                    episodes = listOf(EpisodeItem(title = "Tonton Film Lengkap", slug = movieId))
+                )
             }
-        } ?: emptyList()
+        }!!
 
-        AnimeDetail(
-            title = title,
-            thumb = thumb,
-            synopsis = overview,
-            rating = rating,
-            status = if (year.isNotBlank()) "$year • Film Bioskop" else "Film Bioskop",
-            genres = genres,
-            info = mapOf(
-                "Tipe" to "Film Bioskop (Movie)",
-                "Tahun" to year.ifBlank { "-" },
-                "Status" to "Full Movie"
-            ),
-            episodes = listOf(EpisodeItem(title = "Tonton Film Lengkap", slug = movieId))
-        )
-    }
+    suspend fun getMovieWatch(movieId: String, preferredProvider: String = "executioner"): WatchResponse =
+        cachedFetch(watchCache, "movie:$movieId:$preferredProvider", WATCH_TTL_MS, { it.servers.isNotEmpty() || it.streamUrl.isNotBlank() }) {
+            coroutineScope {
+                val watchDef = async { getJson("/framextv/watch/$movieId?provider=$preferredProvider") as? JsonObject }
+                val embedDef = async { getJson("/framextv/embed/$movieId?provider=$preferredProvider") as? JsonObject }
 
-    suspend fun getMovieWatch(movieId: String, preferredProvider: String = "executioner"): WatchResponse = coroutineScope {
-        val watchDef = async { getJson("/framextv/watch/$movieId?provider=$preferredProvider") as? JsonObject }
-        val embedDef = async { getJson("/framextv/embed/$movieId?provider=$preferredProvider") as? JsonObject }
+                val watchData = watchDef.await()?.get("data") as? JsonObject
+                val embedData = embedDef.await()?.get("data") as? JsonObject
 
-        val watchData = watchDef.await()?.get("data") as? JsonObject
-        val embedData = embedDef.await()?.get("data") as? JsonObject
+                val servers = mutableListOf<ServerItem>()
+                (watchData?.get("sources") as? JsonArray)?.forEachIndexed { idx, el ->
+                    val s = el as? JsonObject ?: return@forEachIndexed
+                    val sUrl = s.str("url", "file") ?: return@forEachIndexed
+                    val isHls = s.str("type") == "hls" || sUrl.contains(".m3u8", ignoreCase = true)
+                    servers.add(
+                        ServerItem(
+                            label = s.str("server") ?: "${preferredProvider.uppercase()} Stream ${idx + 1} (${if (isHls) "HLS" else "Direct"})",
+                            url = sUrl,
+                            isHls = true,
+                            badge = if (isHls) "HLS" else "MP4",
+                            providerId = preferredProvider
+                        )
+                    )
+                }
 
-        val servers = mutableListOf<ServerItem>()
-        (watchData?.get("sources") as? JsonArray)?.forEachIndexed { idx, el ->
-            val s = el as? JsonObject ?: return@forEachIndexed
-            val sUrl = s.str("url", "file") ?: return@forEachIndexed
-            val isHls = s.str("type") == "hls" || sUrl.contains(".m3u8", ignoreCase = true)
-            servers.add(
-                ServerItem(
-                    label = s.str("server") ?: "${preferredProvider.uppercase()} Stream ${idx + 1} (${if (isHls) "HLS" else "Direct"})",
-                    url = sUrl,
-                    isHls = true,
-                    badge = if (isHls) "HLS" else "MP4",
-                    providerId = preferredProvider
+                MOVIE_PROVIDERS.forEach { prov ->
+                    val embedUrl = "https://framextv.cc/embed/$movieId?autoplay=0&muted=0&controls=1&provider=${prov.id}"
+                    servers.add(
+                        ServerItem(
+                            label = "${prov.name} (${prov.badge})",
+                            url = embedUrl,
+                            isHls = false,
+                            badge = prov.badge,
+                            providerId = prov.id
+                        )
+                    )
+                }
+
+                val subtitles = (watchData?.get("subtitles") as? JsonArray)?.mapIndexedNotNull { idx, el ->
+                    val sub = el as? JsonObject ?: return@mapIndexedNotNull null
+                    val subUrl = sub.str("url") ?: return@mapIndexedNotNull null
+                    val lang = sub.str("lang") ?: "id"
+                    SubtitleItem(
+                        id = sub.str("id") ?: "sub-$idx",
+                        label = sub.str("label") ?: "Sub ${lang.uppercase()}",
+                        lang = lang,
+                        url = subUrl
+                    )
+                } ?: emptyList()
+
+                val defaultStreamUrl = servers.firstOrNull()?.url
+                    ?: embedData?.str("embedUrl")
+                    ?: "https://framextv.cc/embed/$movieId?autoplay=0&muted=0&controls=1&provider=$preferredProvider"
+
+                WatchResponse(
+                    title = watchData?.str("title") ?: "Film Bioskop",
+                    streamUrl = defaultStreamUrl,
+                    animeSlug = movieId,
+                    servers = servers,
+                    subtitles = subtitles,
+                    episodes = listOf(EpisodeItem(title = "Tonton Film Lengkap", slug = movieId))
                 )
-            )
+            }
+        }!!
+
+    suspend fun prefetchNextEpisode(type: String, episodes: List<EpisodeItem>, currentSlug: String) {
+        if (type == "movie" || episodes.size < 2) return
+        val currentIdx = episodes.indexOfFirst { it.slug == currentSlug }
+        if (currentIdx < 0) return
+
+        fun epNum(ep: EpisodeItem): Double {
+            val m = Regex("""(\d+(?:\.\d+)?)""").find(ep.title.ifBlank { ep.slug })
+            return m?.groupValues?.get(1)?.toDoubleOrNull() ?: 0.0
         }
-
-        MOVIE_PROVIDERS.forEach { prov ->
-            val embedUrl = "https://framextv.cc/embed/$movieId?autoplay=0&muted=0&controls=1&provider=${prov.id}"
-            servers.add(
-                ServerItem(
-                    label = "${prov.name} (${prov.badge})",
-                    url = embedUrl,
-                    isHls = false,
-                    badge = prov.badge,
-                    providerId = prov.id
-                )
-            )
+        val newestFirst = epNum(episodes.first()) > epNum(episodes.last())
+        val nextEp = if (newestFirst) episodes.getOrNull(currentIdx - 1) else episodes.getOrNull(currentIdx + 1)
+        if (nextEp != null) {
+            try {
+                if (type == "donghua") getDonghuaWatch(nextEp.slug) else getAnimeWatch(nextEp.slug)
+            } catch (_: Exception) {}
         }
-
-        val subtitles = (watchData?.get("subtitles") as? JsonArray)?.mapIndexedNotNull { idx, el ->
-            val sub = el as? JsonObject ?: return@mapIndexedNotNull null
-            val subUrl = sub.str("url") ?: return@mapIndexedNotNull null
-            val lang = sub.str("lang") ?: "id"
-            SubtitleItem(
-                id = sub.str("id") ?: "sub-$idx",
-                label = sub.str("label") ?: "Sub ${lang.uppercase()}",
-                lang = lang,
-                url = subUrl
-            )
-        } ?: emptyList()
-
-        val defaultStreamUrl = servers.firstOrNull()?.url
-            ?: embedData?.str("embedUrl")
-            ?: "https://framextv.cc/embed/$movieId?autoplay=0&muted=0&controls=1&provider=$preferredProvider"
-
-        WatchResponse(
-            title = watchData?.str("title") ?: "Film Bioskop",
-            streamUrl = defaultStreamUrl,
-            animeSlug = movieId,
-            servers = servers,
-            subtitles = subtitles,
-            episodes = listOf(EpisodeItem(title = "Tonton Film Lengkap", slug = movieId))
-        )
     }
 
     // --- 4. SUBTITLES (SRT & WebVTT Parser, mirrors subtitleParser.ts) ---

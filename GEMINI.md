@@ -11,9 +11,11 @@ Please refer to [AGENTS.md](./AGENTS.md) for the complete list of rules.
 3. **MANDATORY NATIVE EDIT TOOLS**:
    - Always use `edit_file` / `write_file` directly.
 4. **ANDROID TV FOCUS INTEGRITY**:
-   - Keep drawer unmounted when closed (`{isDrawerOpen && <Drawer>}`).
+   - Keep drawer/panel unmounted when closed (`if (isDrawerOpen)` / `{isDrawerOpen && <Drawer>}`).
    - Maintain crisp `#FFFFFF` TV outlines and 100% remote D-pad navigability.
+   - Reserve >= `12.dp` `contentPadding` inside `LazyRow`/`LazyVerticalGrid`/`LazyColumn`, and always place `.verticalScroll(...)`/`.horizontalScroll(...)` BEFORE `.padding(...)` in Compose so scaled focus borders never clip.
+   - In `native-tv/`, key `WebView` `AndroidView` by `(streamUrl, isDirectHls)` with `onRelease` cleanup.
 5. **STRICT SCOPE INTEGRITY (ONLY MODIFY REQUESTED FILES)**:
-   - Only edit the specific file(s) requested by the user.
+   - Only edit the specific file(s) requested by the user; keep `native-tv/` and React Native (`src/`/`android/`) isolated.
    - Never proactively modify sister/unrelated files without explicit user consent.
 

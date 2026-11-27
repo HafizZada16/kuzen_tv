@@ -129,14 +129,14 @@ fun CatalogScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(BackgroundDark)
-            .padding(horizontal = 28.dp, vertical = 20.dp)
+            .padding(start = 10.dp, end = 10.dp, top = 14.dp)
     ) {
         Text(
             text = headerTitle,
             color = TextPrimary,
-            fontSize = 22.sp,
+            fontSize = 18.sp,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 12.dp)
+            modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 6.dp)
         )
 
         if (category == "Search") {
@@ -146,7 +146,7 @@ fun CatalogScreen(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 16.dp)
+                    .padding(start = 12.dp, end = 12.dp, bottom = 14.dp)
             ) {
                 Box(
                     contentAlignment = Alignment.CenterStart,
@@ -202,30 +202,33 @@ fun CatalogScreen(
             }
         } else if (filters.isNotEmpty()) {
             LazyRow(
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.padding(bottom = 16.dp)
+                modifier = Modifier.padding(bottom = 4.dp)
             ) {
                 items(filters) { f ->
                     val isSelected = activeFilter == f.key
                     Button(
                         onClick = { activeFilter = f.key },
-                        shape = ButtonDefaults.shape(RoundedCornerShape(8.dp)),
+                        shape = ButtonDefaults.shape(RoundedCornerShape(7.dp)),
                         colors = ButtonDefaults.colors(
                             containerColor = if (isSelected) AccentPrimary else SurfaceCard,
                             focusedContainerColor = AccentPrimary
                         ),
                         border = ButtonDefaults.border(
                             focusedBorder = Border(
-                                border = BorderStroke(2.5.dp, FocusBorderColor),
-                                shape = RoundedCornerShape(8.dp)
+                                border = BorderStroke(2.dp, FocusBorderColor),
+                                shape = RoundedCornerShape(7.dp)
                             )
                         ),
-                        modifier = Modifier.height(38.dp)
+                        scale = ButtonDefaults.scale(focusedScale = 1.05f),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier.height(34.dp)
                     ) {
                         Text(
                             text = f.label,
                             color = TextPrimary,
-                            fontSize = 13.sp,
+                            fontSize = 12.sp,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                         )
                     }
@@ -247,10 +250,10 @@ fun CatalogScreen(
             }
         } else {
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 150.dp),
-                contentPadding = PaddingValues(bottom = 32.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                columns = GridCells.Adaptive(minSize = 124.dp),
+                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 14.dp, bottom = 28.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
                 items(items, key = { "${it.type}-${it.slug}-${it.title}" }) { item ->

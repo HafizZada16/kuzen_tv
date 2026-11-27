@@ -30,9 +30,9 @@ fun TVMediaCard(
     Card(
         onClick = onClick,
         modifier = modifier
-            .width(150.dp)
-            .height(218.dp),
-        shape = CardDefaults.shape(RoundedCornerShape(10.dp)),
+            .width(124.dp)
+            .height(178.dp),
+        shape = CardDefaults.shape(RoundedCornerShape(8.dp)),
         colors = CardDefaults.colors(
             containerColor = SurfaceCard,
             focusedContainerColor = SurfaceCardFocused
@@ -40,11 +40,11 @@ fun TVMediaCard(
         border = CardDefaults.border(
             border = Border(
                 border = BorderStroke(1.dp, BorderMuted),
-                shape = RoundedCornerShape(10.dp)
+                shape = RoundedCornerShape(8.dp)
             ),
             focusedBorder = Border(
-                border = BorderStroke(3.dp, FocusBorderColor),
-                shape = RoundedCornerShape(10.dp)
+                border = BorderStroke(2.5.dp, FocusBorderColor),
+                shape = RoundedCornerShape(8.dp)
             )
         ),
         scale = CardDefaults.scale(focusedScale = 1.07f)
@@ -61,7 +61,7 @@ fun TVMediaCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(92.dp)
+                    .height(72.dp)
                     .align(Alignment.BottomCenter)
                     .background(
                         Brush.verticalGradient(
@@ -74,16 +74,16 @@ fun TVMediaCard(
             if (!item.rating.isNullOrBlank() && item.rating != "N/A") {
                 Box(
                     modifier = Modifier
-                        .padding(6.dp)
+                        .padding(4.dp)
                         .align(Alignment.TopStart)
-                        .clip(RoundedCornerShape(5.dp))
+                        .clip(RoundedCornerShape(4.dp))
                         .background(Color.Black.copy(alpha = 0.78f))
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                        .padding(horizontal = 5.dp, vertical = 1.5.dp)
                 ) {
                     Text(
                         text = "★ ${item.rating}",
                         color = BadgeRating,
-                        fontSize = 10.sp,
+                        fontSize = 9.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -93,16 +93,16 @@ fun TVMediaCard(
             if (!item.status.isNullOrBlank()) {
                 Box(
                     modifier = Modifier
-                        .padding(6.dp)
+                        .padding(4.dp)
                         .align(Alignment.TopEnd)
-                        .clip(RoundedCornerShape(5.dp))
+                        .clip(RoundedCornerShape(4.dp))
                         .background(AccentPrimary.copy(alpha = 0.92f))
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                        .padding(horizontal = 5.dp, vertical = 1.5.dp)
                 ) {
                     Text(
                         text = item.status,
                         color = Color.White,
-                        fontSize = 10.sp,
+                        fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -114,14 +114,14 @@ fun TVMediaCard(
             Text(
                 text = item.title,
                 color = TextPrimary,
-                fontSize = 12.sp,
+                fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
-                lineHeight = 16.sp,
+                lineHeight = 14.sp,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(horizontal = 9.dp, vertical = 8.dp)
+                    .padding(horizontal = 7.dp, vertical = 6.dp)
             )
         }
     }

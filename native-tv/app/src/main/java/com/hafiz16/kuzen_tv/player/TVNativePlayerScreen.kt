@@ -248,6 +248,10 @@ fun TVNativePlayerScreen(
             }
         }
         isLoading = false
+        val eps = populated?.episodes.orEmpty()
+        if (eps.size >= 2) {
+            launch { MediaRepository.prefetchNextEpisode(normType, eps, currentEpisode.slug) }
+        }
     }
 
     fun handleTelemetry(rawJson: String) {

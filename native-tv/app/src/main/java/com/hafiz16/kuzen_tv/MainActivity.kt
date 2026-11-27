@@ -39,9 +39,9 @@ private data class NavTab(val id: String, val label: String)
 
 private val SIDEBAR_TABS = listOf(
     NavTab("Home", "Beranda"),
-    NavTab("Movie", "Film Bioskop"),
     NavTab("Anime", "Anime"),
     NavTab("Donghua", "Donghua"),
+    NavTab("Movie", "Film Bioskop"),
     NavTab("Search", "Pencarian")
 )
 
@@ -89,32 +89,32 @@ fun KuzenTvNavigationApp(
                         .fillMaxSize()
                         .background(BackgroundDark)
                 ) {
-                    // Kuzen TV Sidebar
+                    // Kuzen TV Sidebar (Compact TV Rail)
                     Column(
                         modifier = Modifier
-                            .width(176.dp)
+                            .width(148.dp)
                             .fillMaxHeight()
                             .background(SurfaceDark)
-                            .padding(horizontal = 14.dp, vertical = 20.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                            .padding(horizontal = 12.dp, vertical = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
                             text = "KUZEN TV",
                             color = AccentPrimary,
-                            fontSize = 18.sp,
+                            fontSize = 15.sp,
                             fontWeight = FontWeight.ExtraBold,
-                            modifier = Modifier.padding(start = 6.dp, bottom = 14.dp)
+                            modifier = Modifier.padding(start = 6.dp, bottom = 10.dp)
                         )
 
                         SIDEBAR_TABS.forEach { tab ->
                             val isActive = selectedTab == tab.id
                             Button(
                                 onClick = { selectedTab = tab.id },
-                                shape = ButtonDefaults.shape(RoundedCornerShape(8.dp)),
+                                shape = ButtonDefaults.shape(RoundedCornerShape(7.dp)),
                                 border = ButtonDefaults.border(
                                     focusedBorder = Border(
-                                        border = BorderStroke(2.5.dp, FocusBorderColor),
-                                        shape = RoundedCornerShape(8.dp)
+                                        border = BorderStroke(2.dp, FocusBorderColor),
+                                        shape = RoundedCornerShape(7.dp)
                                     )
                                 ),
                                 colors = ButtonDefaults.colors(
@@ -122,14 +122,15 @@ fun KuzenTvNavigationApp(
                                     focusedContainerColor = AccentPrimary
                                 ),
                                 scale = ButtonDefaults.scale(focusedScale = 1.05f),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(44.dp)
+                                    .height(38.dp)
                             ) {
                                 Text(
                                     text = tab.label,
                                     color = if (isActive) Color.White else TextSecondary,
-                                    fontSize = 14.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium
                                 )
                             }
