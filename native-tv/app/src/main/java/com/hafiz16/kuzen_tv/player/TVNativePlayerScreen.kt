@@ -10,7 +10,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -98,6 +98,7 @@ fun TVNativePlayerScreen(
     var drawerTab by remember { mutableStateOf("episodes") } // episodes, servers, subtitles
     var drawerIndex by remember { mutableStateOf(0) }
     var scrubTime by remember { mutableStateOf(0.0) }
+    var pendingResumeTime by remember { mutableStateOf(0.0) }
     var centerToast by remember { mutableStateOf<String?>(null) }
 
     var lastLoadedKey by remember { mutableStateOf("") }
@@ -164,9 +165,17 @@ fun TVNativePlayerScreen(
     }
 
     fun selectServer(srv: ServerItem) {
+        val resumeAt = if (currentTime > 2.0) currentTime else pendingResumeTime
+        pendingResumeTime = resumeAt
         isDrawerOpen = false
         isOsdVisible = false
         activeTier = 1
+        currentTime = resumeAt
+        bufferedTime = 0.0
+        hlsLevels = emptyList()
+        currentLevelIndex = -1
+        isBuffering = true
+        val resumeHint = if (resumeAt > 2.0) " (${formatTime(resumeAt)})" else ""
         if (normType == "movie" && !srv.providerId.isNullOrBlank() && !srv.isHls) {
             showToast("Menghubungkan ${srv.label}...")
             scope.launch {
@@ -175,13 +184,13 @@ fun TVNativePlayerScreen(
                 val chosen = res.servers.firstOrNull() ?: srv
                 currentServer = chosen
                 lastLoadedKey = ""
-                showToast("Server: ${chosen.label}")
+                showToast("Server: ${chosen.label}$resumeHint")
             }
             return
         }
         currentServer = srv
         lastLoadedKey = ""
-        showToast("Server: ${srv.label}")
+        showToast("Server: ${srv.label}$resumeHint")
     }
 
     // Load WatchResponse when episode changes
@@ -191,6 +200,7 @@ fun TVNativePlayerScreen(
         hlsLevels = emptyList()
         currentLevelIndex = -1
         currentTime = 0.0
+        pendingResumeTime = 0.0
         bufferedTime = 0.0
         subtitleCues = emptyList()
         currentCueText = null
@@ -323,9 +333,13 @@ fun TVNativePlayerScreen(
         showToast("Kualitas: $lbl")
     }
 
-    fun openDrawer(tab: String) {
-        drawerTab = tab
-        drawerIndex = when (tab) {
+    fun getPanelTabs(): List<String> {
+        return if (normType == "movie") listOf("servers", "subtitles")
+        else listOf("episodes", "servers")
+    }
+
+    fun getSelectedIndexForTab(tab: String): Int {
+        return when (tab) {
             "episodes" -> watchData?.episodes?.indexOfFirst { it.slug == currentEpisode.slug }?.coerceAtLeast(0) ?: 0
             "servers" -> watchData?.servers?.indexOfFirst { it.url == currentServer?.url }?.coerceAtLeast(0) ?: 0
             else -> {
@@ -333,6 +347,11 @@ fun TVNativePlayerScreen(
                 if (found >= 0) found + 1 else 0
             }
         }
+    }
+
+    fun openDrawer(tab: String) {
+        drawerTab = tab
+        drawerIndex = getSelectedIndexForTab(tab)
         isDrawerOpen = true
         activeTier = 4
     }
@@ -356,7 +375,7 @@ fun TVNativePlayerScreen(
                     when {
                         isDrawerOpen -> {
                             isDrawerOpen = false
-                            activeTier = 3
+                            activeTier = if (isOsdVisible) 3 else 1
                             true
                         }
                         isOsdVisible -> {
@@ -376,18 +395,34 @@ fun TVNativePlayerScreen(
                         "servers" -> watchData?.servers?.size ?: 0
                         else -> (watchData?.subtitles?.size ?: 0) + 1
                     }
+                    val tabs = getPanelTabs()
+                    val tabIdx = tabs.indexOf(drawerTab).coerceAtLeast(0)
                     when (keyCode) {
-                        KeyEvent.KEYCODE_DPAD_LEFT -> {
+                        KeyEvent.KEYCODE_DPAD_UP -> {
                             if (drawerIndex > 0) drawerIndex--
                             true
                         }
-                        KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                        KeyEvent.KEYCODE_DPAD_DOWN -> {
                             if (drawerIndex < count - 1) drawerIndex++
                             true
                         }
-                        KeyEvent.KEYCODE_DPAD_UP -> {
-                            isDrawerOpen = false
-                            activeTier = 3
+                        KeyEvent.KEYCODE_DPAD_LEFT -> {
+                            if (tabIdx > 0) {
+                                val nextTab = tabs[tabIdx - 1]
+                                drawerTab = nextTab
+                                drawerIndex = getSelectedIndexForTab(nextTab)
+                            } else {
+                                isDrawerOpen = false
+                                activeTier = if (isOsdVisible) 3 else 1
+                            }
+                            true
+                        }
+                        KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                            if (tabIdx < tabs.lastIndex) {
+                                val nextTab = tabs[tabIdx + 1]
+                                drawerTab = nextTab
+                                drawerIndex = getSelectedIndexForTab(nextTab)
+                            }
                             true
                         }
                         KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
@@ -414,23 +449,31 @@ fun TVNativePlayerScreen(
                         KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
                             sendJsCommand("TOGGLE")
                             isPlaying = !isPlaying
-                            showToast(if (isPlaying) "▶ Putar" else "⏸ Jeda")
+                            showToast(if (isPlaying) "Putar" else "Jeda")
                             true
                         }
-                        KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                            val step = getScrubStep()
-                            val delta = if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) step.toDouble() else -step.toDouble()
-                            scrubTime = (currentTime + delta).coerceIn(0.0, duration)
-                            isOsdVisible = true
-                            activeTier = 2
+                        KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_REWIND -> {
+                            val target = (currentTime - 10.0).coerceIn(0.0, duration)
+                            currentTime = target
+                            sendJsCommand("SEEK", target)
+                            showToast("-10s")
                             true
                         }
-                        KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> {
+                        KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+                            val target = (currentTime + 10.0).coerceIn(0.0, duration)
+                            currentTime = target
+                            sendJsCommand("SEEK", target)
+                            showToast("+10s")
+                            true
+                        }
+                        KeyEvent.KEYCODE_DPAD_UP -> {
+                            openDrawer(if (normType == "movie") "servers" else "episodes")
+                            true
+                        }
+                        KeyEvent.KEYCODE_DPAD_DOWN -> {
                             scrubTime = currentTime
                             isOsdVisible = true
-                            activeTier = 3
-                            val btns = getQuickButtons()
-                            if (tier3Selection !in btns) tier3Selection = btns.first()
+                            activeTier = 2
                             true
                         }
                         else -> false
@@ -438,13 +481,17 @@ fun TVNativePlayerScreen(
                 }
                 activeTier == 2 -> {
                     when (keyCode) {
-                        KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                        KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_REWIND,
+                        KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+                            val isForward = keyCode == KeyEvent.KEYCODE_DPAD_RIGHT || keyCode == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD
                             val step = getScrubStep()
-                            val delta = if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) step.toDouble() else -step.toDouble()
+                            val delta = if (isForward) step.toDouble() else -step.toDouble()
                             scrubTime = (scrubTime + delta).coerceIn(0.0, duration)
+                            showToast(if (isForward) "+${step}s" else "-${step}s")
                             true
                         }
                         KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                            scrubStreak = 0
                             currentTime = scrubTime
                             sendJsCommand("SEEK", scrubTime)
                             showToast("Lompat ke ${formatTime(scrubTime)}")
@@ -453,12 +500,14 @@ fun TVNativePlayerScreen(
                             true
                         }
                         KeyEvent.KEYCODE_DPAD_DOWN -> {
+                            scrubStreak = 0
                             activeTier = 3
                             val btns = getQuickButtons()
                             if (tier3Selection !in btns) tier3Selection = btns.first()
                             true
                         }
                         KeyEvent.KEYCODE_DPAD_UP -> {
+                            scrubStreak = 0
                             isOsdVisible = false
                             activeTier = 1
                             true
@@ -496,7 +545,7 @@ fun TVNativePlayerScreen(
                         KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
                             sendJsCommand("TOGGLE")
                             isPlaying = !isPlaying
-                            showToast(if (isPlaying) "▶ Putar" else "⏸ Jeda")
+                            showToast(if (isPlaying) "Putar" else "Jeda")
                             true
                         }
                         else -> true
@@ -542,101 +591,110 @@ fun TVNativePlayerScreen(
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        // 1. Isolated Non-Focusable WebView Surface
+        // 1. Isolated Non-Focusable WebView Surface (keyed per streamUrl; onRelease destroys exact old WebView)
         if (!isLoading && streamUrl.isNotBlank()) {
-            AndroidView(
-                factory = { ctx ->
-                    WebView(ctx).apply {
-                        layoutParams = ViewGroup.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT
-                        )
-                        setBackgroundColor(android.graphics.Color.BLACK)
-                        isFocusable = false
-                        isFocusableInTouchMode = false
-                        descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+            key(streamUrl, isDirectHls) {
+                AndroidView(
+                    factory = { ctx ->
+                        WebView(ctx).apply {
+                            layoutParams = ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT
+                            )
+                            setBackgroundColor(android.graphics.Color.BLACK)
+                            isFocusable = false
+                            isFocusableInTouchMode = false
+                            descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
 
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.mediaPlaybackRequiresUserGesture = false
-                        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                        settings.useWideViewPort = true
-                        settings.loadWithOverviewMode = true
-                        settings.userAgentString =
-                            "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
+                            settings.javaScriptEnabled = true
+                            settings.domStorageEnabled = true
+                            settings.mediaPlaybackRequiresUserGesture = false
+                            settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                            settings.useWideViewPort = true
+                            settings.loadWithOverviewMode = true
+                            settings.userAgentString =
+                                "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
 
-                        addJavascriptInterface(
-                            KuzenWebBridge { msg -> mainHandler.post { handleTelemetry(msg) } },
-                            "ReactNativeWebView"
-                        )
+                            addJavascriptInterface(
+                                KuzenWebBridge { msg -> mainHandler.post { handleTelemetry(msg) } },
+                                "ReactNativeWebView"
+                            )
 
-                        webChromeClient = object : WebChromeClient() {
-                            override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
-                                result?.cancel()
-                                return true
-                            }
-                            override fun onJsConfirm(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
-                                result?.cancel()
-                                return true
-                            }
-                        }
-
-                        webViewClient = object : WebViewClient() {
-                            override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
-                                if (request != null && AdBlocker.shouldBlock(request)) {
-                                    return AdBlocker.createEmptyResponse()
-                                }
-                                return super.shouldInterceptRequest(view, request)
-                            }
-
-                            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                                val reqUrl = request?.url?.toString().orEmpty()
-                                if (isDirectHls || normType == "movie") return false
-                                val l = reqUrl.lowercase()
-                                if (l.startsWith("about:") || l.startsWith("blob:") || l.startsWith("data:")) return false
-                                if (l.startsWith("intent:") || l.startsWith("market:") || l.startsWith("whatsapp:") || l.startsWith("tg:") || !l.startsWith("http")) {
+                            webChromeClient = object : WebChromeClient() {
+                                override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+                                    result?.cancel()
                                     return true
                                 }
-                                if (reqUrl == streamUrl || l.contains("/cors-proxy?") || l.contains("/iframe-proxy?")) return false
-                                val allowed = listOf(
-                                    "playdesu", "odstream", "odsstream", "odcdn", "otakudesu", "moedesu",
-                                    "desustream", "ondesu", "pdrain", "pixeldrain", "kuramadrive", "kuramanime",
-                                    "anichin", "animexin", "mega.nz", "google.com", "googleapis.com", "blogger.com",
-                                    "acefile", "kuzen.web.id", "framextv", "vidsrc", "embed", "stream"
-                                )
-                                return allowed.none { l.contains(it) }
-                            }
-
-                            override fun onPageFinished(view: WebView?, url: String?) {
-                                super.onPageFinished(view, url)
-                                if (!isDirectHls) {
-                                    val script = PlayerScriptInjector.buildInjectedScript(
-                                        context = ctx,
-                                        sourceType = normType,
-                                        startTime = 0.0,
-                                        totalDuration = duration
-                                    )
-                                    view?.evaluateJavascript(script, null)
+                                override fun onJsConfirm(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+                                    result?.cancel()
+                                    return true
                                 }
                             }
+
+                            webViewClient = object : WebViewClient() {
+                                override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                                    if (request != null && AdBlocker.shouldBlock(request)) {
+                                        return AdBlocker.createEmptyResponse()
+                                    }
+                                    return super.shouldInterceptRequest(view, request)
+                                }
+
+                                override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                                    val reqUrl = request?.url?.toString().orEmpty()
+                                    if (isDirectHls || normType == "movie") return false
+                                    val l = reqUrl.lowercase()
+                                    if (l.startsWith("about:") || l.startsWith("blob:") || l.startsWith("data:")) return false
+                                    if (l.startsWith("intent:") || l.startsWith("market:") || l.startsWith("whatsapp:") || l.startsWith("tg:") || !l.startsWith("http")) {
+                                        return true
+                                    }
+                                    if (reqUrl == streamUrl || l.contains("/cors-proxy?") || l.contains("/iframe-proxy?")) return false
+                                    val allowed = listOf(
+                                        "playdesu", "odstream", "odsstream", "odcdn", "otakudesu", "moedesu",
+                                        "desustream", "ondesu", "pdrain", "pixeldrain", "kuramadrive", "kuramanime",
+                                        "anichin", "animexin", "mega.nz", "google.com", "googleapis.com", "blogger.com",
+                                        "acefile", "kuzen.web.id", "framextv", "vidsrc", "embed", "stream"
+                                    )
+                                    return allowed.none { l.contains(it) }
+                                }
+
+                                override fun onPageFinished(view: WebView?, url: String?) {
+                                    super.onPageFinished(view, url)
+                                    if (!isDirectHls && url != "about:blank") {
+                                        val script = PlayerScriptInjector.buildInjectedScript(
+                                            context = ctx,
+                                            sourceType = normType,
+                                            startTime = pendingResumeTime,
+                                            totalDuration = duration
+                                        )
+                                        view?.evaluateJavascript(script, null)
+                                    }
+                                }
+                            }
+                            webViewRef = this
+                            if (isDirectHls) {
+                                val html = PlayerScriptInjector.buildHlsPlayerHtml(context, streamUrl, pendingResumeTime)
+                                loadDataWithBaseURL("https://kuzen.web.id", html, "text/html", "UTF-8", null)
+                            } else {
+                                loadUrl(streamUrl, buildHeaders(streamUrl))
+                            }
                         }
-                        webViewRef = this
-                    }
-                },
-                update = { webView ->
-                    val targetKey = "$streamUrl|$isDirectHls"
-                    if (lastLoadedKey != targetKey) {
-                        lastLoadedKey = targetKey
-                        if (isDirectHls) {
-                            val html = PlayerScriptInjector.buildHlsPlayerHtml(context, streamUrl, 0.0)
-                            webView.loadDataWithBaseURL("https://kuzen.web.id", html, "text/html", "UTF-8", null)
-                        } else {
-                            webView.loadUrl(streamUrl, buildHeaders(streamUrl))
-                        }
-                    }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
+                    },
+                    onRelease = { oldWebView ->
+                        try {
+                            oldWebView.stopLoading()
+                            oldWebView.evaluateJavascript(
+                                "try{var vs=document.querySelectorAll('video');for(var i=0;i<vs.length;i++){vs[i].pause();vs[i].src='';vs[i].load();}if(window.__HLS_INSTANCE__)window.__HLS_INSTANCE__.destroy();}catch(e){}",
+                                null
+                            )
+                            oldWebView.loadUrl("about:blank")
+                            oldWebView.clearHistory()
+                            oldWebView.destroy()
+                            if (webViewRef === oldWebView) webViewRef = null
+                        } catch (_: Exception) {}
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
         }
 
         // Loading / Buffering status
@@ -705,32 +763,26 @@ fun TVNativePlayerScreen(
                     .padding(horizontal = 36.dp, vertical = 24.dp)
             ) {
                 // Top Info
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = mediaItem.title,
-                            color = TextPrimary,
-                            fontSize = 19.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = "${currentEpisode.title} • ${currentServer?.label ?: "Server"}",
-                            color = TextSecondary,
-                            fontSize = 13.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    val epDisplay = if (normType == "movie") {
+                        currentEpisode.title
+                    } else {
+                        MediaRepository.extractEpisodeLabel(currentEpisode.title, 0)
                     }
                     Text(
-                        text = "BACK: Tutup OSD",
+                        text = mediaItem.title,
+                        color = TextPrimary,
+                        fontSize = 19.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "$epDisplay • ${currentServer?.label ?: "Server"}",
                         color = TextSecondary,
-                        fontSize = 12.sp
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
@@ -819,35 +871,60 @@ fun TVNativePlayerScreen(
             }
         }
 
-        // 3. Tier 4 Bottom Drawer (ONLY mounted when isDrawerOpen == true)
+        // 3. Right-Side Panel (ONLY mounted when isDrawerOpen == true)
         if (isDrawerOpen) {
             Column(
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
+                    .align(Alignment.CenterEnd)
+                    .width(330.dp)
+                    .fillMaxHeight()
                     .background(BackgroundElevated.copy(alpha = 0.96f))
                     .border(1.dp, BorderMuted)
-                    .padding(horizontal = 32.dp, vertical = 18.dp)
+                    .padding(horizontal = 18.dp, vertical = 22.dp)
             ) {
-                val drawerTitle = when (drawerTab) {
-                    "episodes" -> "Pilih Episode"
-                    "servers" -> "Pilih Server Stream"
-                    else -> "Pilih Subtitle"
+                // Panel Tabs (LEFT/RIGHT to switch)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 14.dp)
+                ) {
+                    getPanelTabs().forEach { tab ->
+                        val isActiveTab = drawerTab == tab
+                        val tabLabel = when (tab) {
+                            "episodes" -> "Episode"
+                            "servers" -> "Server"
+                            else -> "Subtitle"
+                        }
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isActiveTab) AccentPrimary else SurfaceCard)
+                                .border(
+                                    BorderStroke(if (isActiveTab) 2.dp else 1.dp, if (isActiveTab) FocusBorderColor else BorderMuted),
+                                    RoundedCornerShape(8.dp)
+                                )
+                                .padding(vertical = 8.dp)
+                        ) {
+                            Text(
+                                text = tabLabel,
+                                color = TextPrimary,
+                                fontSize = 13.sp,
+                                fontWeight = if (isActiveTab) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
+                    }
                 }
-                Text(
-                    text = "$drawerTitle  (◀ ▶ Navigasi • OK Pilih • BACK Tutup)",
-                    color = TextPrimary,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(bottom = 12.dp)
-                )
 
                 when (drawerTab) {
                     "episodes" -> {
                         val eps = watchData?.episodes.orEmpty()
-                        LazyRow(
+                        LazyColumn(
                             state = drawerListState,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxSize()
                         ) {
                             itemsIndexed(eps) { idx, ep ->
                                 val selected = idx == drawerIndex
@@ -863,9 +940,10 @@ fun TVNativePlayerScreen(
                     }
                     "servers" -> {
                         val srvs = watchData?.servers.orEmpty()
-                        LazyRow(
+                        LazyColumn(
                             state = drawerListState,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxSize()
                         ) {
                             itemsIndexed(srvs) { idx, srv ->
                                 val selected = idx == drawerIndex
@@ -881,9 +959,10 @@ fun TVNativePlayerScreen(
                     }
                     else -> {
                         val subs = watchData?.subtitles.orEmpty()
-                        LazyRow(
+                        LazyColumn(
                             state = drawerListState,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxSize()
                         ) {
                             item {
                                 DrawerCard(
@@ -920,14 +999,14 @@ private fun DrawerCard(
 ) {
     Column(
         modifier = Modifier
-            .width(175.dp)
+            .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .background(if (isFocused) AccentPrimary else if (isActive) SurfaceCardFocused else SurfaceCard)
             .border(
                 BorderStroke(if (isFocused) 3.dp else 1.dp, if (isFocused) FocusBorderColor else BorderMuted),
                 RoundedCornerShape(8.dp)
             )
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .padding(horizontal = 14.dp, vertical = 10.dp)
     ) {
         Text(
             text = title,

@@ -16,6 +16,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
@@ -139,6 +140,7 @@ fun CatalogScreen(
         )
 
         if (category == "Search") {
+            var isSearchFocused by remember { mutableStateOf(false) }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -152,7 +154,11 @@ fun CatalogScreen(
                         .weight(1f)
                         .height(46.dp)
                         .background(SurfaceCard, RoundedCornerShape(8.dp))
-                        .border(1.5.dp, BorderMuted, RoundedCornerShape(8.dp))
+                        .border(
+                            width = if (isSearchFocused) 2.5.dp else 1.5.dp,
+                            color = if (isSearchFocused) FocusBorderColor else BorderMuted,
+                            shape = RoundedCornerShape(8.dp)
+                        )
                         .padding(horizontal = 14.dp)
                 ) {
                     if (searchQuery.isEmpty()) {
@@ -170,7 +176,9 @@ fun CatalogScreen(
                         cursorBrush = SolidColor(AccentPrimary),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(onSearch = { scope.launch { loadCatalog() } }),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onFocusChanged { isSearchFocused = it.isFocused }
                     )
                 }
 

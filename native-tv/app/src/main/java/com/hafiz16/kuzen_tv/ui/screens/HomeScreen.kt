@@ -38,18 +38,18 @@ fun HomeScreen(
     LaunchedEffect(Unit) {
         isLoading = true
         coroutineScope {
-            val popMoviesDef = async { MediaRepository.getDiscoverMovies(1, "", "popularity.desc") }
-            val animeDef = async { MediaRepository.getOngoingAnime(1) }
-            val actionMoviesDef = async { MediaRepository.getDiscoverMovies(1, "28", "popularity.desc") }
+            val ongoingAnimeDef = async { MediaRepository.getOngoingAnime(1) }
+            val completedAnimeDef = async { MediaRepository.getCompletedAnime(1) }
             val popDonghuaDef = async { MediaRepository.getPopularDonghua(1) }
-            val onDonghuaDef = async { MediaRepository.getOngoingDonghua(1) }
+            val popMoviesDef = async { MediaRepository.getDiscoverMovies(1, "", "popularity.desc") }
+            val actionMoviesDef = async { MediaRepository.getDiscoverMovies(1, "28", "popularity.desc") }
 
             val built = listOf(
-                MediaSection("Film Bioskop Populer", popMoviesDef.await()),
-                MediaSection("Anime Terbaru", animeDef.await()),
-                MediaSection("Film Aksi Pilihan", actionMoviesDef.await()),
+                MediaSection("Anime Ongoing", ongoingAnimeDef.await()),
+                MediaSection("Anime Completed", completedAnimeDef.await()),
                 MediaSection("Donghua Populer", popDonghuaDef.await()),
-                MediaSection("Donghua Terbaru", onDonghuaDef.await())
+                MediaSection("Film Bioskop Populer", popMoviesDef.await()),
+                MediaSection("Film Aksi Pilihan", actionMoviesDef.await())
             ).filter { it.items.isNotEmpty() }
 
             sections = built

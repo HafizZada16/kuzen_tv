@@ -121,6 +121,7 @@ fun KuzenTvNavigationApp(
                                     containerColor = if (isActive) AccentPrimary else Color.Transparent,
                                     focusedContainerColor = AccentPrimary
                                 ),
+                                scale = ButtonDefaults.scale(focusedScale = 1.05f),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(44.dp)
