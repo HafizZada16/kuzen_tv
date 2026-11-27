@@ -2,13 +2,13 @@
   "expo": {
     "name": "KuzenTV",
     "slug": "kuzen-tv",
-    "version": "1.0.2",
+    "version": "2.2.0",
     "orientation": "landscape",
     "icon": "./assets/images/icon.png",
     "userInterfaceStyle": "dark",
     "android": {
       "package": "com.hafiz16.kuzen_tv",
-      "versionCode": 2,
+      "versionCode": 4,
       "minSdkVersion": 24,
       "adaptiveIcon": {
         "backgroundColor": "#0a0a0a",
