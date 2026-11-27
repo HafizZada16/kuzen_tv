@@ -259,6 +259,11 @@ export function setCachedAnimeWatch(slug: string, data: WatchResponse): void {
   watchDataMemoryCache.set(slug, { data, timestamp: Date.now() });
 }
 
+export function clearMediaMemoryCache(): void {
+  animeDetailMemoryCache.clear();
+  watchDataMemoryCache.clear();
+}
+
 export async function fetchAnimeWatch(slug: string, forceRefresh: boolean = false): Promise<WatchResponse> {
   if (!forceRefresh) {
     const cached = getCachedAnimeWatch(slug);

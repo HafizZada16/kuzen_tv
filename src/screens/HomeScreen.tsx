@@ -8,7 +8,6 @@ import {
   MediaItem,
 } from '../services/mediaService';
 import { fetchDiscoverMovies } from '../services/movieService';
-import { TVHeroBanner } from '../components/TVHeroBanner';
 import { TVMediaRow } from '../components/TVMediaRow';
 import { Flame, Sparkles, Film, Tv } from 'lucide-react-native';
 
@@ -23,7 +22,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectItem }) => {
   const [ongoingDonghua, setOngoingDonghua] = useState<MediaItem[]>([]);
   const [popularMovies, setPopularMovies] = useState<MediaItem[]>([]);
   const [actionMovies, setActionMovies] = useState<MediaItem[]>([]);
-  const [featuredItem, setFeaturedItem] = useState<MediaItem | null>(null);
 
   useEffect(() => {
     async function loadData() {
@@ -41,14 +39,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectItem }) => {
         setOngoingDonghua(onDonghua);
         setPopularMovies(popMovies);
         setActionMovies(actMovies);
-
-        if (anime.length > 0) {
-          setFeaturedItem(anime[0]);
-        } else if (popMovies.length > 0) {
-          setFeaturedItem(popMovies[0]);
-        } else if (popDonghua.length > 0) {
-          setFeaturedItem(popDonghua[0]);
-        }
       } catch (err) {
         console.error('Failed to load home screen media:', err);
       } finally {
@@ -72,17 +62,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectItem }) => {
       showsVerticalScrollIndicator={false}
       contentContainerStyle={styles.container}
     >
-      {/* Hero Banner Spotlight */}
-      <TVHeroBanner
-        item={featuredItem}
-        onPlayPress={onSelectItem}
-        onDetailPress={onSelectItem}
-      />
-
       {/* Row 1: Film Bioskop Populer */}
       {popularMovies.length > 0 && (
         <TVMediaRow
-          title="Film Bioskop Populer (FrameX)"
+          title="Film Bioskop Populer"
           icon={<Film size={20} color={Colors.primary} />}
           items={popularMovies}
           onSelectItem={onSelectItem}
@@ -91,7 +74,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectItem }) => {
 
       {/* Row 2: Anime Ongoing */}
       <TVMediaRow
-        title="Anime Terbaru (Otakudesu)"
+        title="Anime Terbaru"
         icon={<Flame size={20} color={Colors.primary} />}
         items={ongoingAnime}
         onSelectItem={onSelectItem}
@@ -100,7 +83,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectItem }) => {
       {/* Row 3: Film Aksi & Bioskop Pilihan */}
       {actionMovies.length > 0 && (
         <TVMediaRow
-          title="Film Aksi Pilihan (FrameX)"
+          title="Film Aksi Pilihan"
           icon={<Tv size={20} color={Colors.primary} />}
           items={actionMovies}
           onSelectItem={onSelectItem}
@@ -109,7 +92,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectItem }) => {
 
       {/* Row 4: Donghua Populer */}
       <TVMediaRow
-        title="Donghua Populer (Anichin)"
+        title="Donghua Populer"
         icon={<Sparkles size={20} color={Colors.primary} />}
         items={popularDonghua}
         onSelectItem={onSelectItem}
@@ -117,7 +100,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectItem }) => {
 
       {/* Row 5: Donghua Ongoing */}
       <TVMediaRow
-        title="Donghua Terbaru (Anichin)"
+        title="Donghua Terbaru"
         icon={<Film size={20} color={Colors.primary} />}
         items={ongoingDonghua}
         onSelectItem={onSelectItem}

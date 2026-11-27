@@ -41,8 +41,8 @@ const NAV_ITEMS: NavItemDef[] = [
   { id: 'settings', label: 'Pengaturan', icon: Settings },
 ];
 
-export const COLLAPSED_WIDTH = 72;
-export const EXPANDED_WIDTH = 224;
+export const COLLAPSED_WIDTH = 58;
+export const EXPANDED_WIDTH = 195;
 
 export const TVSidebar: React.FC<TVSidebarProps> = ({
   activeTab,
@@ -121,7 +121,7 @@ export const TVSidebar: React.FC<TVSidebarProps> = ({
       {/* Brand Icon Mini-Header */}
       <View style={styles.brandIconWrapper}>
         <View style={styles.brandCircle}>
-          <Tv size={22} color={Colors.primary} />
+          <Tv size={18} color={Colors.primary} />
         </View>
         <Animated.View
           style={[
@@ -161,7 +161,7 @@ export const TVSidebar: React.FC<TVSidebarProps> = ({
 
               <View style={styles.iconContainer}>
                 <IconComponent
-                  size={22}
+                  size={18}
                   color={
                     isFocused
                       ? '#FFFFFF'
@@ -211,8 +211,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#0d0d0d',
     borderRightWidth: 1,
     borderRightColor: Colors.borderMuted,
-    paddingVertical: 24,
-    paddingHorizontal: 12,
+    paddingVertical: 18,
+    paddingHorizontal: 9,
     justifyContent: 'space-between',
     zIndex: 100,
     elevation: 20,
@@ -221,12 +221,12 @@ const styles = StyleSheet.create({
   brandIconWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 28,
+    marginBottom: 20,
   },
   brandCircle: {
-    width: 46,
-    height: 46,
-    borderRadius: 12,
+    width: 38,
+    height: 38,
+    borderRadius: 10,
     backgroundColor: 'rgba(234, 88, 12, 0.15)',
     justifyContent: 'center',
     alignItems: 'center',
@@ -234,25 +234,25 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
   },
   brandTextWrapper: {
-    marginLeft: 12,
-    width: 140,
+    marginLeft: 10,
+    width: 130,
   },
   brandTitle: {
-    fontSize: 20,
+    fontSize: 17,
     fontWeight: '800',
     color: '#FFFFFF',
-    letterSpacing: 0.8,
+    letterSpacing: 0.6,
   },
   navItemsList: {
     flex: 1,
-    gap: 10,
+    gap: 7,
   },
   navButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: 48,
-    borderRadius: 12,
-    borderWidth: 2.5,
+    height: 40,
+    borderRadius: 10,
+    borderWidth: 2,
     borderColor: 'transparent',
     overflow: 'hidden',
   },
@@ -273,23 +273,23 @@ const styles = StyleSheet.create({
   activeBar: {
     position: 'absolute',
     left: 2,
-    width: 3.5,
-    height: 22,
+    width: 3,
+    height: 18,
     borderRadius: 2,
     backgroundColor: Colors.primary,
   },
   iconContainer: {
-    width: 44,
-    height: 44,
+    width: 38,
+    height: 38,
     alignItems: 'center',
     justifyContent: 'center',
   },
   navLabel: {
     color: Colors.textMuted,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
-    marginLeft: 10,
-    width: 130,
+    marginLeft: 8,
+    width: 125,
   },
   navLabelActive: {
     color: '#FFFFFF',
@@ -300,14 +300,14 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   footerContainer: {
-    height: 24,
+    height: 22,
     justifyContent: 'center',
     paddingLeft: 4,
   },
   footerText: {
     color: Colors.textMuted,
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '500',
-    width: 150,
+    width: 130,
   },
 });

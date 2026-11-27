@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            outline: none !important;
+            -webkit-tap-highlight-color: transparent !important;
+            -webkit-touch-callout: none !important;
+            user-select: none !important;
+            -webkit-user-select: none !important;
+        }
+        html, body {
+            width: 100% !important;
+            height: 100% !important;
+            background: #000000 !important;
+            overflow: hidden !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+        }
+        #kuzen-video {
+            width: 100% !important;
+            height: 100% !important;
+            max-width: 100% !important;
+            max-height: 100% !important;
+            object-fit: contain !important;
+            background: #000000 !important;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.7/dist/hls.min.js"></script>
+</head>
+<body>
+    <video id="kuzen-video" playsinline webkit-playsinline x5-playsinline preload="auto" autoplay></video>
+    <script>
+        (function() {
+            var video = document.getElementById('kuzen-video');
+            try {
+                video.setAttribute('playsinline', 'true');
+                video.setAttribute('webkit-playsinline', 'true');
+                video.setAttribute('x5-playsinline', 'true');
+            } catch(e) {}
+            var streamUrl = __STREAM_URL__;
+            var initTime = __INIT_TIME__;
+            var hlsInstance = null;
+            var userWantsPaused = false;
+            var allowPause = false;
+
+            var origPlay = video.play;
+            video.play = function() {
+                if (userWantsPaused) return Promise.reject(new Error('User paused playback'));
+                return origPlay.apply(this, arguments);
+            };
+
+            var origPause = video.pause;
+            video.pause = function() {
+                if (!userWantsPaused && !allowPause) return;
+                return origPause.apply(this, arguments);
+            };
+
+            function postMsg(data) {
+                try {
+                    if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+                        window.ReactNativeWebView.postMessage(JSON.stringify(data));
+                    }
+                } catch(e) {}
+            }
+
+            window.__QUETTA_EXEC__ = function(action, val) {
+                try {
+                    if (action === 'PLAY') {
+                        userWantsPaused = false;
+                        if (hlsInstance) try { hlsInstance.startLoad(); } catch(e) {}
+                        video.play().catch(function() {});
+                        postMsg({ type: 'playstate', isPlaying: true });
+                    } else if (action === 'PAUSE') {
+                        userWantsPaused = true;
+                        allowPause = true;
+                        video.pause();
+                        allowPause = false;
+                        postMsg({ type: 'playstate', isPlaying: false });
+                    } else if (action === 'TOGGLE') {
+                        if (userWantsPaused || video.paused) {
+                            userWantsPaused = false;
+                            allowPause = false;
+                            if (hlsInstance) try { hlsInstance.startLoad(); } catch(e) {}
+                            video.play().catch(function() {});
+                            postMsg({ type: 'playstate', isPlaying: true });
+                        } else {
+                            userWantsPaused = true;
+                            allowPause = true;
+                            video.pause();
+                            allowPause = false;
+                            postMsg({ type: 'playstate', isPlaying: false });
+                        }
+                    } else if (action === 'SEEK') {
+                        if (typeof val === 'number') video.currentTime = val;
+                    } else if (action === 'SPEED') {
+                        if (typeof val === 'number') video.playbackRate = val;
+                    } else if (action === 'ASPECT' || action === 'ASPECT_RATIO') {
+                        video.style.objectFit = val === 'fill' ? 'fill' : (val === 'cover' || val === '16:9') ? 'cover' : 'contain';
+                    } else if (action === 'QUALITY') {
+                        if (hlsInstance) {
+                            var targetLvl = typeof val === 'number' ? val : -1;
+                            hlsInstance.currentLevel = targetLvl;
+                            hlsInstance.loadLevel = targetLvl;
+                        }
+                    }
+                } catch(e) {}
+            };
+
+            video.addEventListener('loadedmetadata', function() {
+                postMsg({ type: 'video_ready', duration: video.duration || 0, isPlaying: !video.paused, videoWidth: video.videoWidth || 0, videoHeight: video.videoHeight || 0 });
+            });
+            video.addEventListener('canplay', function() {
+                postMsg({ type: 'video_ready', duration: video.duration || 0, isPlaying: !video.paused, videoWidth: video.videoWidth || 0, videoHeight: video.videoHeight || 0 });
+                postMsg({ type: 'buffering', isBuffering: false });
+            });
+            video.addEventListener('play', function() {
+                if (userWantsPaused) { try { video.pause(); } catch(e) {} return; }
+                postMsg({ type: 'playstate', isPlaying: true });
+            });
+            video.addEventListener('playing', function() {
+                if (userWantsPaused) { try { video.pause(); } catch(e) {} return; }
+                postMsg({ type: 'playstate', isPlaying: true });
+                postMsg({ type: 'buffering', isBuffering: false });
+            });
+            video.addEventListener('pause', function() {
+                if (!userWantsPaused && !allowPause) { try { video.play().catch(function() {}); } catch(e) {} return; }
+                postMsg({ type: 'playstate', isPlaying: false });
+            });
+            video.addEventListener('ended', function() {
+                userWantsPaused = true;
+                allowPause = true;
+                try { video.pause(); } catch(e) {}
+                allowPause = false;
+                postMsg({ type: 'playstate', isPlaying: false });
+                postMsg({ type: 'ended' });
+            });
+            video.addEventListener('waiting', function() { postMsg({ type: 'buffering', isBuffering: true }); });
+            video.addEventListener('timeupdate', function() {
+                var bufferedEnd = 0;
+                try { if (video.buffered && video.buffered.length > 0) bufferedEnd = video.buffered.end(video.buffered.length - 1); } catch(e) {}
+                postMsg({ type: 'timeupdate', currentTime: video.currentTime || 0, duration: video.duration || 0, buffered: bufferedEnd });
+            });
+            video.addEventListener('progress', function() {
+                try { if (video.buffered && video.buffered.length > 0) postMsg({ type: 'progress', buffered: video.buffered.end(video.buffered.length - 1) }); } catch(e) {}
+            });
+            video.addEventListener('seeked', function() { postMsg({ type: 'seeked', currentTime: video.currentTime || 0 }); });
+            video.addEventListener('error', function() { postMsg({ type: 'media_error', message: 'Gagal memuat video HLS' }); });
+
+            function setupHls() {
+                if (window.Hls && Hls.isSupported()) {
+                    var hls = new Hls({
+                        debug: false,
+                        enableWorker: true,
+                        lowLatencyMode: false,
+                        capLevelToPlayerSize: true,
+                        backBufferLength: 60,
+                        maxBufferLength: 30,
+                        maxMaxBufferLength: 60,
+                        maxBufferSize: 60 * 1024 * 1024,
+                        maxBufferHole: 0.5,
+                        highBufferWatchdogPeriod: 2,
+                        nudgeOffset: 0.2,
+                        nudgeMaxRetry: 5,
+                        manifestLoadingTimeOut: 20000,
+                        manifestLoadingMaxRetry: 5,
+                        levelLoadingTimeOut: 20000,
+                        levelLoadingMaxRetry: 5,
+                        fragLoadingTimeOut: 25000,
+                        fragLoadingMaxRetry: 5,
+                        startPosition: initTime > 0 ? initTime : -1
+                    });
+                    hlsInstance = hls;
+                    window.__HLS_INSTANCE__ = hls;
+                    hls.loadSource(streamUrl);
+                    hls.attachMedia(video);
+
+                    hls.on(Hls.Events.MANIFEST_PARSED, function(event, data) {
+                        var targetLevel = -1;
+                        if (data && data.levels && data.levels.length > 0) {
+                            for (var li = 0; li < data.levels.length; li++) {
+                                var lh = data.levels[li].height;
+                                if (lh && lh <= 1080) {
+                                    if (targetLevel === -1 || lh > (data.levels[targetLevel] ? data.levels[targetLevel].height : 0)) {
+                                        targetLevel = li;
+                                    }
+                                }
+                            }
+                            if (targetLevel !== -1) {
+                                hls.autoLevelCapping = targetLevel;
+                                hls.currentLevel = -1;
+                            }
+                            var parsedLevels = data.levels.map(function(lvl, idx) {
+                                return { index: idx, label: lvl.height ? (lvl.height + 'p') : ('Kualitas ' + (idx + 1)), height: lvl.height || 0, bitrate: lvl.bitrate || 0 };
+                            });
+                            postMsg({ type: 'hls_levels', levels: parsedLevels, currentLevel: -1 });
+                        }
+                        postMsg({ type: 'video_ready', duration: video.duration || 0, isPlaying: true, videoWidth: video.videoWidth || 0, videoHeight: video.videoHeight || 0 });
+                        postMsg({ type: 'buffering', isBuffering: false });
+                        if (initTime > 0) try { video.currentTime = initTime; } catch(e) {}
+                        if (!userWantsPaused) video.play().catch(function() { video.muted = true; video.play().catch(function() {}); });
+                    });
+
+                    hls.on(Hls.Events.LEVEL_LOADED, function(event, data) {
+                        if (data && data.details && data.details.totalduration) {
+                            postMsg({ type: 'video_ready', duration: data.details.totalduration, isPlaying: !video.paused });
+                        }
+                    });
+
+                    hls.on(Hls.Events.ERROR, function(event, data) {
+                        if (data.fatal) {
+                            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
+                            else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+                            else { hls.destroy(); postMsg({ type: 'media_error', message: 'Gagal memuat fragmen HLS' }); }
+                        }
+                    });
+                } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                    video.src = streamUrl;
+                    if (initTime > 0) try { video.currentTime = initTime; } catch(e) {}
+                    if (!userWantsPaused) video.play().catch(function() { video.muted = true; video.play().catch(function() {}); });
+                }
+            }
+
+            if (window.Hls) setupHls();
+            else {
+                window.addEventListener('DOMContentLoaded', setupHls);
+                window.addEventListener('load', setupHls);
+                setTimeout(function() { if (!hlsInstance && !video.src) setupHls(); }, 1500);
+            }
+        })();
+    </script>
+</body>
+</html>

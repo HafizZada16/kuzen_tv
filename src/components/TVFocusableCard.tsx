@@ -4,9 +4,9 @@ import {
   Text,
   View,
   Pressable,
-  Image,
   Animated,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Colors } from '../constants/Colors';
 import { Star, Play } from 'lucide-react-native';
 
@@ -30,8 +30,8 @@ export const TVFocusableCard: React.FC<TVFocusableCardProps> = ({
   thumb,
   rating,
   badge,
-  width = 190,
-  height = 270,
+  width = 145,
+  height = 210,
   hasTVPreferredFocus = false,
   onPress,
   onFocus,
@@ -78,11 +78,14 @@ export const TVFocusableCard: React.FC<TVFocusableCardProps> = ({
           isFocused && styles.cardFocused,
         ]}
       >
-        {/* Poster Image */}
+        {/* Poster Image with Glide Native Downsampling & Recycling */}
         <Image
           source={{ uri: thumb || 'https://via.placeholder.com/300x450/161615/FFFFFF?text=No+Image' }}
           style={styles.posterImage}
-          resizeMode="cover"
+          contentFit="cover"
+          transition={150}
+          recyclingKey={thumb}
+          cachePolicy="memory-disk"
         />
 
         {/* Gradient Shadow Overlay at Bottom */}
@@ -92,7 +95,7 @@ export const TVFocusableCard: React.FC<TVFocusableCardProps> = ({
         <View style={styles.badgeRow}>
           {rating ? (
             <View style={styles.ratingBadge}>
-              <Star size={11} color="#FBBF24" fill="#FBBF24" />
+              <Star size={9} color="#FBBF24" fill="#FBBF24" />
               <Text style={styles.ratingText}>{rating}</Text>
             </View>
           ) : null}
@@ -108,7 +111,7 @@ export const TVFocusableCard: React.FC<TVFocusableCardProps> = ({
         {isFocused && (
           <View style={styles.playIconContainer}>
             <View style={styles.playIconCircle}>
-              <Play size={22} color="#FFFFFF" fill="#FFFFFF" />
+              <Play size={16} color="#FFFFFF" fill="#FFFFFF" />
             </View>
           </View>
         )}
@@ -134,25 +137,25 @@ export const TVFocusableCard: React.FC<TVFocusableCardProps> = ({
 
 const styles = StyleSheet.create({
   touchableWrapper: {
-    marginRight: 18,
-    marginVertical: 10,
+    marginRight: 12,
+    marginVertical: 6,
   },
   cardContainer: {
-    borderRadius: 12,
+    borderRadius: 10,
     backgroundColor: Colors.card,
     overflow: 'hidden',
-    borderWidth: 3,
+    borderWidth: 2.5,
     borderColor: 'transparent',
     elevation: 3,
   },
   cardFocused: {
     borderColor: '#FFFFFF', // Outline PUTIH cerah & jelas sesuai instruksi remote Android TV!
-    borderWidth: 3.5,
+    borderWidth: 3,
     shadowColor: '#FFFFFF',
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.85,
-    shadowRadius: 10,
-    elevation: 14,
+    shadowRadius: 8,
+    elevation: 12,
   },
   posterImage: {
     width: '100%',
@@ -165,9 +168,9 @@ const styles = StyleSheet.create({
   },
   badgeRow: {
     position: 'absolute',
-    top: 10,
-    left: 10,
-    right: 10,
+    top: 7,
+    left: 7,
+    right: 7,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -177,26 +180,26 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(0, 0, 0, 0.75)',
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 6,
-    gap: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+    gap: 3,
   },
   ratingText: {
     color: '#FBBF24',
-    fontSize: 11,
+    fontSize: 9.5,
     fontWeight: '700',
   },
   statusBadge: {
     backgroundColor: 'rgba(234, 88, 12, 0.85)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    maxWidth: 90,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    maxWidth: 80,
   },
   badgeText: {
     color: '#FFFFFF',
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '700',
   },
   playIconContainer: {
@@ -206,36 +209,36 @@ const styles = StyleSheet.create({
     zIndex: 15,
   },
   playIconCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: 'rgba(234, 88, 12, 0.95)',
     borderWidth: 2,
     borderColor: '#FFFFFF',
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.5,
-    shadowRadius: 8,
-    elevation: 6,
+    shadowRadius: 6,
+    elevation: 5,
   },
   detailsContainer: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
     backgroundColor: 'rgba(10, 10, 10, 0.92)',
-    borderBottomLeftRadius: 9,
-    borderBottomRightRadius: 9,
+    borderBottomLeftRadius: 8,
+    borderBottomRightRadius: 8,
   },
   title: {
     color: '#E5E5E5',
-    fontSize: 13,
+    fontSize: 11.5,
     fontWeight: '600',
-    lineHeight: 18,
+    lineHeight: 15,
   },
   titleFocused: {
     color: '#FFFFFF',
@@ -243,8 +246,8 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     color: Colors.textMuted,
-    fontSize: 11,
-    marginTop: 3,
+    fontSize: 10,
+    marginTop: 2,
     fontWeight: '500',
   },
 });

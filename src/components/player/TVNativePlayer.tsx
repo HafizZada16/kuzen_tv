@@ -47,7 +47,6 @@ import {
   Check,
   Tv,
   Subtitles as SubtitlesIcon,
-  Scan,
   Sliders,
 } from 'lucide-react-native';
 
@@ -130,11 +129,10 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
   const [drawerTab, setDrawerTab] = useState<'episodes' | 'servers' | 'subtitles'>('episodes');
   const [drawerIndex, setDrawerIndex] = useState<number>(0);
   const [activeTier, setActiveTier] = useState<1 | 2 | 3 | 4>(1);
-  const [tier3Selection, setTier3Selection] = useState<'episodes' | 'servers' | 'subtitles' | 'quality' | 'speed' | 'aspect'>('episodes');
+  const [tier3Selection, setTier3Selection] = useState<'episodes' | 'servers' | 'subtitles' | 'quality' | 'speed'>('episodes');
   const [scrubTime, setScrubTime] = useState<number>(0);
   const [scrubStep, setScrubStep] = useState<number>(10);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1.0);
-  const [aspectRatio, setAspectRatio] = useState<'auto' | '16:9' | 'fill' | 'cover'>('auto');
   const [hlsLevels, setHlsLevels] = useState<{ index: number; label: string; height: number }[]>([]);
   const [currentLevelIndex, setCurrentLevelIndex] = useState<number>(-1);
   const [selectedSubtitle, setSelectedSubtitle] = useState<SubtitleItem | null>(null);
@@ -161,7 +159,7 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
   const activeTierRef = useRef<1 | 2 | 3 | 4>(1);
   activeTierRef.current = activeTier;
 
-  const tier3SelectionRef = useRef<'episodes' | 'servers' | 'subtitles' | 'quality' | 'speed' | 'aspect'>('episodes');
+  const tier3SelectionRef = useRef<'episodes' | 'servers' | 'subtitles' | 'quality' | 'speed'>('episodes');
   tier3SelectionRef.current = tier3Selection;
 
   const scrubTimeRef = useRef<number>(0);
@@ -169,9 +167,6 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
 
   const playbackSpeedRef = useRef<number>(1.0);
   playbackSpeedRef.current = playbackSpeed;
-
-  const aspectRatioRef = useRef<'auto' | '16:9' | 'fill' | 'cover'>('auto');
-  aspectRatioRef.current = aspectRatio;
 
   const selectedSubtitleRef = useRef<SubtitleItem | null>(null);
   selectedSubtitleRef.current = selectedSubtitle;
@@ -342,6 +337,36 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
     };
   }, [episodeSlug, normSource, animeSlug, initialEpisodes]);
 
+  // --- Unmount Cleanup & Media Buffer / WebView Cache Flush ---
+  useEffect(() => {
+    playerActiveRef.current = true;
+    return () => {
+      playerActiveRef.current = false;
+      try {
+        if (webViewRef.current) {
+          // Explicitly detach and destroy media elements to prevent memory leaks and background buffer bloat
+          webViewRef.current.injectJavaScript(`
+            try {
+              var vids = document.querySelectorAll('video');
+              for (var i = 0; i < vids.length; i++) {
+                vids[i].pause();
+                vids[i].src = '';
+                vids[i].load();
+              }
+              if (window.hls) {
+                window.hls.destroy();
+              }
+            } catch (e) {}
+            true;
+          `);
+          webViewRef.current.clearCache?.(true);
+        }
+      } catch (e) {
+        // Safe no-op on player unmount
+      }
+    };
+  }, []);
+
   // --- 2. SmartTube Auto-Close Timer for OSD Menu (8 seconds inactivity) ---
   const resetOsdTimer = useCallback(() => {
     if (osdTimeoutRef.current) {
@@ -476,16 +501,6 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
     },
     [duration, currentTime, showCenterToast]
   );
-
-  const cycleAspectRatio = useCallback(() => {
-    const OPTIONS: ('auto' | '16:9' | 'fill' | 'cover')[] = ['auto', '16:9', 'fill', 'cover'];
-    const nextIdx = (OPTIONS.indexOf(aspectRatioRef.current) + 1) % OPTIONS.length;
-    const nextAspect = OPTIONS[nextIdx];
-    setAspectRatio(nextAspect);
-    aspectRatioRef.current = nextAspect;
-    sendQuettaCommand('ASPECT_RATIO', nextAspect);
-    showCenterToast('info', `Rasio: ${nextAspect.toUpperCase()}`, 1000);
-  }, [showCenterToast]);
 
   const cycleQuality = useCallback(() => {
     if (!hlsLevels || hlsLevels.length === 0) {
@@ -848,10 +863,10 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
       // 5. Tingkat 3 (Barisan Pilih Episode, Server, Subtitle, Kualitas, Kecepatan, Rasio): OSD Terbuka
       if (activeTierRef.current === 3) {
         resetOsdTimer();
-        const buttons: ('episodes' | 'servers' | 'subtitles' | 'quality' | 'speed' | 'aspect')[] =
+        const buttons: ('episodes' | 'servers' | 'subtitles' | 'quality' | 'speed')[] =
           normSource === 'movie'
-            ? (hlsLevels.length > 0 ? ['servers', 'subtitles', 'quality', 'speed', 'aspect'] : ['servers', 'subtitles', 'speed', 'aspect'])
-            : (hlsLevels.length > 0 ? ['episodes', 'servers', 'quality', 'speed', 'aspect'] : ['episodes', 'servers', 'speed', 'aspect']);
+            ? (hlsLevels.length > 0 ? ['servers', 'subtitles', 'quality', 'speed'] : ['servers', 'subtitles', 'speed'])
+            : (hlsLevels.length > 0 ? ['episodes', 'servers', 'quality', 'speed'] : ['episodes', 'servers', 'speed']);
 
         if (keyCode === 21) { // LEFT
           const currIdx = buttons.indexOf(tier3SelectionRef.current);
@@ -872,8 +887,6 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
             cyclePlaybackSpeed();
           } else if (tier3SelectionRef.current === 'quality') {
             cycleQuality();
-          } else if (tier3SelectionRef.current === 'aspect') {
-            cycleAspectRatio();
           } else if (tier3SelectionRef.current === 'subtitles') {
             openDrawer('subtitles');
             setActiveTier(4);
@@ -897,9 +910,7 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
     getScrubStep,
     cyclePlaybackSpeed,
     cycleQuality,
-    cycleAspectRatio,
     hlsLevels,
-    cycleAspectRatio,
     selectSubtitle,
     handleServerSelect,
     togglePlayPause,
@@ -1381,28 +1392,6 @@ export const TVNativePlayer: React.FC<TVNativePlayerProps> = ({
                   ]}
                 >
                   ⚡ {playbackSpeed}x
-                </Text>
-              </Pressable>
-
-              <Pressable
-                focusable={false}
-                onPress={cycleAspectRatio}
-                style={[
-                  styles.quickNavBtn,
-                  activeTier === 3 && tier3Selection === 'aspect' && styles.quickNavBtnFocused,
-                ]}
-              >
-                <Scan
-                  size={18}
-                  color={activeTier === 3 && tier3Selection === 'aspect' ? '#FFFFFF' : Colors.primary}
-                />
-                <Text
-                  style={[
-                    styles.quickNavBtnText,
-                    activeTier === 3 && tier3Selection === 'aspect' && styles.quickNavBtnTextFocused,
-                  ]}
-                >
-                  📺 {aspectRatio.toUpperCase()}
                 </Text>
               </Pressable>
 

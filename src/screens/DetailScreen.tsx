@@ -4,12 +4,11 @@ import {
   Text,
   View,
   ScrollView,
-  Image,
-  ImageBackground,
   Pressable,
   ActivityIndicator,
   BackHandler,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Colors } from '../constants/Colors';
 import {
   MediaItem,
@@ -142,7 +141,8 @@ export const DetailScreen: React.FC<DetailScreenProps> = ({
         <Image
           source={{ uri: detail?.thumb || item.thumb }}
           style={styles.posterImage}
-          resizeMode="cover"
+          contentFit="cover"
+          transition={150}
         />
 
         <View style={styles.infoCol}>

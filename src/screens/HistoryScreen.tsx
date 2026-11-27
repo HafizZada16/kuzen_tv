@@ -80,8 +80,8 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({ onSelectHistory })
                 subtitle={`${item.episode_title} • ${progressPercent > 0 ? `${progressPercent}%` : 'Baru mulai'}`}
                 thumb={item.anime_thumb}
                 badge={item.source === 'anichin' ? 'Donghua' : 'Anime'}
-                width={180}
-                height={260}
+                width={145}
+                height={210}
                 onPress={() => onSelectHistory(item)}
               />
             </View>

@@ -52,7 +52,7 @@ export const AnimeScreen: React.FC<AnimeScreenProps> = ({ onSelectItem }) => {
     >
       <View style={styles.pageHeader}>
         <Text style={styles.pageTitle}>Katalog Anime</Text>
-        <Text style={styles.pageSubtitle}>Sumber resmi Otakudesu • Subtitle Indonesia</Text>
+        <Text style={styles.pageSubtitle}>Update Episode Terbaru • Subtitle Indonesia</Text>
       </View>
 
       <TVMediaRow

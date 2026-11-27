@@ -18,8 +18,8 @@ export const TVMediaRow: React.FC<TVMediaRowProps> = ({
   icon,
   items,
   onSelectItem,
-  cardWidth = 180,
-  cardHeight = 260,
+  cardWidth = 145,
+  cardHeight = 210,
 }) => {
   if (!items || items.length === 0) return null;
 
@@ -57,12 +57,12 @@ export const TVMediaRow: React.FC<TVMediaRowProps> = ({
 
 const styles = StyleSheet.create({
   rowContainer: {
-    marginBottom: 28,
+    marginBottom: 18,
   },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 6,
     gap: 8,
   },
   iconWrapper: {
@@ -71,13 +71,13 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     color: '#FFFFFF',
-    fontSize: 18,
+    fontSize: 15,
     fontWeight: '700',
     letterSpacing: 0.3,
   },
   scrollContent: {
-    paddingRight: 40,
-    paddingLeft: 4,
-    paddingVertical: 14,
+    paddingRight: 36,
+    paddingLeft: 2,
+    paddingVertical: 8,
   },
 });

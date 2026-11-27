@@ -1,0 +1,69 @@
+apply plugin: 'com.android.application'
+apply plugin: 'org.jetbrains.kotlin.android'
+apply plugin: 'org.jetbrains.kotlin.plugin.compose'
+apply plugin: 'org.jetbrains.kotlin.plugin.serialization'
+
+android {
+    namespace 'com.hafiz16.kuzen_tv'
+    compileSdkVersion 34
+
+    defaultConfig {
+        applicationId 'com.hafiz16.kuzen_tv'
+        minSdkVersion 21
+        targetSdkVersion 34
+        versionCode 3
+        versionName "2.0.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.debug
+        }
+        debug {
+            applicationIdSuffix ".debug"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+        freeCompilerArgs += [
+            "-opt-in=androidx.tv.material3.ExperimentalTvMaterial3Api"
+        ]
+    }
+
+    buildFeatures {
+        compose true
+    }
+}
+
+dependencies {
+    def composeBom = platform('androidx.compose:compose-bom:2024.10.01')
+    implementation composeBom
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.7'
+    implementation 'androidx.activity:activity-compose:1.9.3'
+
+    // Jetpack Compose for Android TV
+    implementation 'androidx.tv:tv-foundation:1.0.0-alpha11'
+    implementation 'androidx.tv:tv-material:1.0.0'
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.compose.ui:ui-tooling-preview'
+    implementation 'androidx.compose.material:material-icons-extended'
+
+    // Network & Scraping (OkHttp + Jsoup + kotlinx.serialization)
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3'
+    implementation 'org.jsoup:jsoup:1.18.1'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
+
+    // Image loading
+    implementation 'io.coil-kt:coil-compose:2.7.0'
+}

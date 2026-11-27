@@ -56,7 +56,7 @@ export const DonghuaScreen: React.FC<DonghuaScreenProps> = ({ onSelectItem }) =>
     >
       <View style={styles.pageHeader}>
         <Text style={styles.pageTitle}>Katalog Donghua (3D/2D)</Text>
-        <Text style={styles.pageSubtitle}>Sumber resmi Anichin & Kuramadrive HLS • Subtitle Indonesia</Text>
+        <Text style={styles.pageSubtitle}>Update Episode Terbaru • Subtitle Indonesia</Text>
       </View>
 
       <TVMediaRow

@@ -195,8 +195,8 @@ export const MovieScreen: React.FC<MovieScreenProps> = ({ onSelectItem }) => {
                     thumb={movie.thumb}
                     rating={movie.rating}
                     badge={movie.rating ? `★ ${movie.rating}` : undefined}
-                    width={180}
-                    height={260}
+                    width={145}
+                    height={210}
                     onPress={() => onSelectItem(movie)}
                   />
                 </View>

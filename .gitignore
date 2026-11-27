@@ -2,6 +2,10 @@ node_modules/
 .expo/
 dist/
 android/
+native-tv/.gradle/
+native-tv/app/build/
+native-tv/build/
+native-tv/local.properties
 ios/
 npm-debug.*
 *.jks

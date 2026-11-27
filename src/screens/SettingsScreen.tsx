@@ -1,5 +1,12 @@
-import React from 'react';
-import { StyleSheet, View, ScrollView, Text } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import {
+  StyleSheet,
+  View,
+  ScrollView,
+  Text,
+  Pressable,
+  ActivityIndicator,
+} from 'react-native';
 import { Colors } from '../constants/Colors';
 import {
   Tv,
@@ -7,9 +14,59 @@ import {
   Server,
   ShieldCheck,
   Cpu,
+  HardDrive,
+  Trash2,
+  CheckCircle2,
 } from 'lucide-react-native';
+import {
+  clearAllAppCache,
+  getLastCacheCleanTimestamp,
+} from '../utils/cacheManager';
 
 export const SettingsScreen: React.FC = () => {
+  const [isCleaning, setIsCleaning] = useState(false);
+  const [cleanFeedback, setCleanFeedback] = useState<string | null>(null);
+  const [lastCleanTime, setLastCleanTime] = useState<string>('Memeriksa...');
+  const [isBtnFocused, setIsBtnFocused] = useState(false);
+
+  const formatTimestamp = (ts: number | null): string => {
+    if (!ts) return 'Belum pernah dibersihkan';
+    const d = new Date(ts);
+    return d.toLocaleDateString('id-ID', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  useEffect(() => {
+    getLastCacheCleanTimestamp().then((ts) => {
+      setLastCleanTime(formatTimestamp(ts));
+    });
+  }, []);
+
+  const handleClearCache = async () => {
+    if (isCleaning) return;
+    setIsCleaning(true);
+    setCleanFeedback(null);
+
+    const result = await clearAllAppCache();
+    setIsCleaning(false);
+
+    if (result.success) {
+      setLastCleanTime(formatTimestamp(result.timestamp));
+      setCleanFeedback('Cache gambar & media berhasil dibersihkan!');
+    } else {
+      setCleanFeedback('Gagal membersihkan sebagian cache.');
+    }
+
+    setTimeout(() => {
+      setCleanFeedback(null);
+    }, 4500);
+  };
+
   return (
     <ScrollView
       showsVerticalScrollIndicator={false}
@@ -21,6 +78,62 @@ export const SettingsScreen: React.FC = () => {
       </View>
 
       <View style={styles.gridSection}>
+        {/* Storage & Cache Management Card */}
+        <View style={styles.infoCard}>
+          <View style={styles.cardHeader}>
+            <HardDrive size={20} color={Colors.primary} />
+            <Text style={styles.cardTitle}>Penyimpanan & Manajemen Cache</Text>
+          </View>
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Cache Gambar Poster:</Text>
+            <Text style={styles.infoValue}>Glide Disk & Memory Cache (expo-image)</Text>
+          </View>
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Buffer Stream Player:</Text>
+            <Text style={styles.infoValue}>Auto-flush media & WebView cache on exit</Text>
+          </View>
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Pembersihan Terakhir:</Text>
+            <Text style={styles.infoValue}>{lastCleanTime}</Text>
+          </View>
+
+          <View style={styles.cacheActionContainer}>
+            <Pressable
+              focusable={true}
+              onFocus={() => setIsBtnFocused(true)}
+              onBlur={() => setIsBtnFocused(false)}
+              onPress={handleClearCache}
+              style={[
+                styles.clearButton,
+                isBtnFocused && styles.clearButtonFocused,
+              ]}
+            >
+              {isCleaning ? (
+                <>
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                  <Text style={styles.clearButtonText}>Sedang Membersihkan...</Text>
+                </>
+              ) : (
+                <>
+                  <Trash2 size={16} color="#FFFFFF" />
+                  <Text style={styles.clearButtonText}>Bersihkan Cache Gambar & Media</Text>
+                </>
+              )}
+            </Pressable>
+
+            {cleanFeedback && (
+              <View style={styles.feedbackRow}>
+                <CheckCircle2 size={15} color="#22C55E" />
+                <Text style={styles.feedbackText}>{cleanFeedback}</Text>
+              </View>
+            )}
+
+            <Text style={styles.cacheSafeNote}>
+              * Aman: Pembersihan tidak menghapus sesi login Supabase, bookmark, atau riwayat tontonan.
+            </Text>
+          </View>
+        </View>
+
         {/* Device & OS Card */}
         <View style={styles.infoCard}>
           <View style={styles.cardHeader}>
@@ -69,27 +182,27 @@ export const SettingsScreen: React.FC = () => {
           </View>
         </View>
 
-        {/* Cloud & Scraper Backend */}
+        {/* Server & Network Status Card */}
         <View style={styles.infoCard}>
           <View style={styles.cardHeader}>
             <Server size={20} color={Colors.primary} />
-            <Text style={styles.cardTitle}>Status Server & Scraper</Text>
+            <Text style={styles.cardTitle}>Status Jaringan & Layanan</Text>
           </View>
           <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Kuzen Core API:</Text>
-            <Text style={styles.infoValue}>https://kuzen.web.id/api (Active)</Text>
+            <Text style={styles.infoLabel}>Kuzen Cloud Service:</Text>
+            <Text style={styles.infoValue}>Terhubung & Aktif (Online)</Text>
           </View>
           <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Database Cloud:</Text>
-            <Text style={styles.infoValue}>Supabase Cloud (Watch History & Watchlist)</Text>
+            <Text style={styles.infoLabel}>Sinkronisasi Cloud:</Text>
+            <Text style={styles.infoValue}>Riwayat Tontonan & Watchlist Aktif</Text>
           </View>
           <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Scraper Anime:</Text>
-            <Text style={styles.infoValue}>Otakudesu Scraper via Reverse Proxy</Text>
+            <Text style={styles.infoLabel}>Resolusi Stream:</Text>
+            <Text style={styles.infoValue}>Auto Adaptif (HLS & Direct Embed)</Text>
           </View>
           <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Scraper Donghua:</Text>
-            <Text style={styles.infoValue}>Anichin & Kuramadrive HLS Stream</Text>
+            <Text style={styles.infoLabel}>Status Subtitle:</Text>
+            <Text style={styles.infoValue}>Subtitle Indonesia Otomatis</Text>
           </View>
         </View>
       </View>
@@ -154,6 +267,53 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#FFFFFF',
     fontWeight: '500',
+  },
+  cacheActionContainer: {
+    marginTop: 16,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderMuted,
+    gap: 10,
+  },
+  clearButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1E293B',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    gap: 8,
+  },
+  clearButtonFocused: {
+    borderColor: '#FFFFFF',
+    borderWidth: 3,
+    backgroundColor: Colors.primary,
+    transform: [{ scale: 1.03 }],
+  },
+  clearButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  feedbackRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 2,
+  },
+  feedbackText: {
+    fontSize: 12,
+    color: '#22C55E',
+    fontWeight: '600',
+  },
+  cacheSafeNote: {
+    fontSize: 11,
+    color: Colors.textMuted,
+    fontStyle: 'italic',
+    marginTop: 2,
   },
 });
 

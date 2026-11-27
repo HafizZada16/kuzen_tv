@@ -151,8 +151,8 @@ const styles = StyleSheet.create({
   },
   mainViewport: {
     flex: 1,
-    paddingTop: 24,
-    paddingRight: 36,
-    paddingLeft: COLLAPSED_WIDTH + 24, // 72px rail + 24px margin
+    paddingTop: 18,
+    paddingRight: 28,
+    paddingLeft: COLLAPSED_WIDTH + 18, // 58px rail + 18px margin
   },
 });
